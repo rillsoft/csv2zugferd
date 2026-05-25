@@ -1,0 +1,124 @@
+# ZUGFeRD CSV-to-PDF Konfiguration – Modus: columns, Style: suffix (Feld_001)
+
+csv:
+  separator: ";"
+  encoding: "UTF-8"
+  hasHeader: true
+  decimalSeparator: ","
+  dateFormat: "dd.MM.yyyy"
+
+zugferd:
+  version: "2.3"
+  profile: "Extended"
+  format: "CII"
+
+mapping:
+  invoice:
+    invoiceNumber:
+      column: "Rechnungsnummer"
+    invoiceDate:
+      column: "Rechnungsdatum"
+    currency:
+      value: "EUR"
+    orderReferenceId:
+      column: "Bestellreferenz"
+    name:
+      value: "WARENRECHNUNG"
+    referenceOrderNo:
+      column: "Bestellnummer"
+    note:
+      column: "Bemerkung"
+
+  buyer:
+    name:
+      column: "Käufer_Name"
+    postalCode:
+      column: "Käufer_PLZ"
+    city:
+      column: "Käufer_Ort"
+    street:
+      column: "Käufer_Strasse"
+    country:
+      column: "Käufer_Land"
+    taxId:
+      column: "Käufer_UStID"
+    taxScheme:
+      value: "VA"
+    contact:
+      column: "Käufer_Ansprechpartner"
+    electronicAddress:
+      column: "Käufer_UStID"
+      scheme: "LuxemburgVatNumber"
+
+  seller:
+    name:
+      column: "Verkäufer_Name"
+    postalCode:
+      column: "Verkäufer_PLZ"
+    city:
+      column: "Verkäufer_Ort"
+    street:
+      column: "Verkäufer_Strasse"
+    country:
+      column: "Verkäufer_Land"
+    taxRegistrations:
+      - column: "Verkäufer_Steuernummer"
+        scheme: "FC"
+      - column: "Verkäufer_UStID"
+        scheme: "VA"
+    electronicAddress:
+      column: "Verkäufer_UStID"
+      scheme: "GermanyVatNumber"
+
+  delivery:
+    deliveryNoteNumber:
+      column: "Lieferscheinnummer"
+    deliveryNoteDate:
+      column: "Lieferscheindatum"
+    actualDeliveryDate:
+      column: "Lieferdatum"
+
+  orderReference:
+    orderNumber:
+      column: "Bestellnummer"
+    orderDate:
+      column: "Bestelldatum"
+
+  lineItems:
+    mode: "columns"
+    columnPattern:
+      style: "suffix"
+      separator: "_"
+      startIndex: 1
+      zeroPadding: 3
+    fields:
+      name:
+        column: "Artikel"
+      description:
+        column: "Beschreibung"
+      netUnitPrice:
+        column: "Einzelpreis"
+      billedQuantity:
+        column: "Menge"
+      taxPercent:
+        column: "MwSt"
+      discountPercent:
+        column: "Rabatt"
+      discountReason:
+        column: "RabattGrund"
+    fixedFields:
+      unitCode:
+        value: "C62"
+      taxType:
+        value: "VAT"
+      taxCategoryCode:
+        value: "S"
+
+  totals:
+    mode: "auto"
+
+  paymentTerms:
+    description:
+      column: "Zahlungsbedingung"
+    dueDate:
+      column: "Fälligkeitsdatum"

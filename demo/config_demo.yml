@@ -1,0 +1,113 @@
+csv:
+  separator: ","
+  encoding: "UTF-8"
+  hasHeader: true
+  decimalSeparator: "."
+  dateFormat: "dd.MM.yyyy"
+
+zugferd:
+  version: "2.3"
+  profile: "Extended"
+  format: "CII"
+
+mapping:
+  invoice:
+    invoiceNumber:
+      column: "INVOICE_NO"
+    invoiceDate:
+      column: "INVOICE_DUEDATE"
+    currency:
+      value: "EUR"
+    orderReferenceId:
+      column: "SALESORDER_ID"
+    referenceOrderNo:
+      column: "SALESORDER_ID"
+
+  buyer:
+    name:
+      column: "ACCOUNT_NAME"
+    postalCode:
+      column: "INVOICE_BILL_CODE"
+    city:
+      column: "INVOICE_BILL_CITY"
+    street:
+      column: "INVOICE_BILL_STREET"
+    country:
+      value: "DE"
+    contact:
+      column: "CONTACT_LASTNAME"
+
+  seller:
+    name:
+      value: "Demo Software GmbH"
+    postalCode:
+      value: "10115"
+    city:
+      value: "Musterstadt"
+    street:
+      value: "Demostrasse 1"
+    country:
+      value: "DE"
+    taxRegistrations:
+      - value: "Demo"
+        scheme: "FC"
+      - value: "DE000000000"
+        scheme: "VA"
+
+  delivery:
+    actualDeliveryDate:
+      column: "SALESORDER_DUEDATE"
+
+  orderReference:
+    orderNumber:
+      column: "SALESORDER_ID"
+
+  lineItems:
+    mode: "columns"
+    columnPattern:
+      style: "suffix"
+      separator: "_"
+      startIndex: 0
+      zeroPadding: 0
+    fields:
+      name:
+        column: "PRODUCT_NAME"
+      sellerAssignedId:
+        column: "PRODUCT_CODE"
+      netUnitPrice:
+        column: "PRODUCT_PRICE"
+      billedQuantity:
+        column: "PRODUCT_QUANTITY"
+      taxPercent:
+        column: "INVOICE_TAX"
+      discountPercent:
+        column: "PRODUCT_DISCOUNT"
+    fixedFields:
+      unitCode:
+        default: "C62"
+        rules:
+          - when:
+              column: "PRODUCT_CODE"
+              regex: "^002"
+            value: "ANN"
+          - when:
+              column: "PRODUCT_CODE"
+              regex: "^003"
+            value: "DAY"
+          - when:
+              column: "PRODUCT_NAME"
+              regex: "(?i)vor-ort-schulung|schulung"
+            value: "DAY"
+      taxType:
+        value: "VAT"
+      taxCategoryCode:
+        value: "S"
+
+  totals:
+    mode: "auto"
+
+  paymentTerms:
+    description:
+      value: "Zahlbar ohne Abzug bis zum Faelligkeitsdatum"
+    dueDate:
+      column: "INVOICE_DUEDATE"
