@@ -1,4 +1,4 @@
-# ZUGFeRD CSV-to-PDF Konfiguration – Modus: rows (eine Zeile pro Position)
+# ZUGFeRD CSV-to-PDF Konfiguration – Modus: rows mit SEPA-Lastschrift
 
 csv:
   separator: ";"
@@ -123,15 +123,27 @@ mapping:
 
   paymentMeans:
     typeCode:
-      value: "58"
+      default: "58"
+      rules:
+        - when:
+            column: "Zahlart"
+            regex: "(?i)^lastschrift$"
+          value: "59"
     information:
-      value: "SEPA-Überweisung"
+      value: "SEPA-Lastschrift"
     paymentReference:
       column: "Rechnungsnummer"
     sellerAccounts:
       - iban:
-          value: "DE02 1203 0000 0000 2020 51"
+          value: "DE02120300000000202051"
         bic:
           value: "BYLADEM1001"
-        name:
-          value: "Lieferant GmbH"
+    directDebit:
+      creditorId:
+        value: "DE98ZZZ09999999999"
+      mandateReference:
+        column: "Mandat"
+      buyerIban:
+        column: "Kunden_IBAN"
+      buyerBic:
+        column: "Kunden_BIC"

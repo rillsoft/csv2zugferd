@@ -111,3 +111,17 @@ mapping:
       value: "Zahlbar ohne Abzug bis zum Faelligkeitsdatum"
     dueDate:
       column: "INVOICE_DUEDATE"
+
+  paymentMeans:
+    typeCode:
+      value: "58"
+    information:
+      value: "SEPA-Ueberweisung"
+    paymentReference:
+      column: "INVOICE_NO"
+    sellerAccounts:
+      # Eigene Bankverbindung eintragen
+      - iban:
+          value: "DE02120300000000202051"
+        bic:
+          value: "BYLADEM1001"
