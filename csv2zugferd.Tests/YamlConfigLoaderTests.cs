@@ -146,6 +146,20 @@ public class YamlConfigLoaderTests
     }
 
     [Test]
+    public void Load_DirectDebitConfig_PaymentMeans()
+    {
+        var config = TestHelper.LoadTestConfig("config_directdebit.yml");
+
+        var paymentMeans = config.Mapping.PaymentMeans!;
+        paymentMeans.TypeCode!.Default.ShouldBe("58");
+        paymentMeans.TypeCode.Rules!.Count.ShouldBe(1);
+        paymentMeans.SellerAccounts!.Count.ShouldBe(1);
+        paymentMeans.DirectDebit!.CreditorId!.Value.ShouldBe("DE98ZZZ09999999999");
+        paymentMeans.DirectDebit.MandateReference!.Column.ShouldBe("Mandat");
+        paymentMeans.DirectDebit.BuyerIban!.Column.ShouldBe("Kunden_IBAN");
+    }
+
+    [Test]
     public void Load_NonExistentFile_ThrowsException()
     {
         Should.Throw<Exception>(() => YamlConfigLoader.Load("nonexistent_file_xyz.yml"));

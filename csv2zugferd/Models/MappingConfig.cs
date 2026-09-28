@@ -10,6 +10,7 @@ public class MappingConfig
     public LineItemsMapping? LineItems { get; set; }
     public TotalsMapping? Totals { get; set; }
     public PaymentTermsMapping? PaymentTerms { get; set; }
+    public PaymentMeansMapping? PaymentMeans { get; set; }
 }
 
 public class FieldMapping
@@ -148,4 +149,28 @@ public class PaymentTermsMapping
 {
     public FieldMapping? Description { get; set; }
     public FieldMapping? DueDate { get; set; }
+}
+
+public class PaymentMeansMapping
+{
+    public FieldMapping? TypeCode { get; set; }
+    public FieldMapping? Information { get; set; }
+    public FieldMapping? PaymentReference { get; set; }
+    public List<FinancialAccountMapping>? SellerAccounts { get; set; }
+    public DirectDebitMapping? DirectDebit { get; set; }
+}
+
+public class FinancialAccountMapping
+{
+    public FieldMapping? Iban { get; set; }
+    public FieldMapping? Bic { get; set; }
+    public FieldMapping? Name { get; set; }
+}
+
+public class DirectDebitMapping
+{
+    public FieldMapping? CreditorId { get; set; }
+    public FieldMapping? MandateReference { get; set; }
+    public FieldMapping? BuyerIban { get; set; }
+    public FieldMapping? BuyerBic { get; set; }
 }

@@ -632,6 +632,170 @@ public class InvoiceMapperTests
         desc.PaymentTerms[0].DueDate!.Value.ShouldBe(new DateTime(2018, 4, 4));
     }
 
+    // ── 4.3.6a Zahlungsmittel / Bankverbindung ────────────────────────────
+
+    [Test]
+    public void Map_PaymentMeans_CreditTransfer_TypeCodeAndInformation()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.PaymentMeans!.TypeCode.ShouldBe(PaymentMeansTypeCodes.SEPACreditTransfer);
+        desc.PaymentMeans.Information.ShouldBe("SEPA-Überweisung");
+        desc.PaymentMeans.SEPACreditorIdentifier.ShouldBeNullOrEmpty();
+    }
+
+    [Test]
+    public void Map_PaymentMeans_CreditTransfer_SellerAccountNormalized()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.CreditorBankAccounts.Count.ShouldBe(1);
+        desc.CreditorBankAccounts[0].IBAN.ShouldBe("DE02120300000000202051");
+        desc.CreditorBankAccounts[0].BIC.ShouldBe("BYLADEM1001");
+        desc.CreditorBankAccounts[0].Name.ShouldBe("Lieferant GmbH");
+        desc.DebitorBankAccounts.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public void Map_PaymentMeans_PaymentReferenceFromColumn()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.PaymentReference.ShouldBe("471102");
+    }
+
+    [Test]
+    public void Map_PaymentMeans_DirectDebit_ViaRule()
+    {
+        var desc = TestHelper.MapFromTestData("config_directdebit.yml", "test_directdebit.csv");
+
+        desc.PaymentMeans!.TypeCode.ShouldBe(PaymentMeansTypeCodes.SEPADirectDebit);
+        desc.PaymentMeans.SEPACreditorIdentifier.ShouldBe("DE98ZZZ09999999999");
+        desc.PaymentMeans.SEPAMandateReference.ShouldBe("MANDAT-2013-001");
+    }
+
+    [Test]
+    public void Map_PaymentMeans_DirectDebit_BuyerAccount()
+    {
+        var desc = TestHelper.MapFromTestData("config_directdebit.yml", "test_directdebit.csv");
+
+        desc.DebitorBankAccounts.Count.ShouldBe(1);
+        desc.DebitorBankAccounts[0].IBAN.ShouldBe("DE89370400440532013000");
+        desc.DebitorBankAccounts[0].BIC.ShouldBe("COBADEFFXXX");
+        InvoiceMapper.CheckPaymentMeans(desc, "XRechnung").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void Map_PaymentMeans_RuleNotMatching_FallsBackToCreditTransfer()
+    {
+        var config = TestHelper.LoadTestConfig("config_directdebit.yml");
+        var rows = TestHelper.ReadTestCsv("test_directdebit.csv", config.Csv);
+        rows[0]["Zahlart"] = "Überweisung";
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.PaymentMeans!.TypeCode.ShouldBe(PaymentMeansTypeCodes.SEPACreditTransfer);
+        desc.PaymentMeans.SEPAMandateReference.ShouldBeNullOrEmpty();
+        desc.DebitorBankAccounts.Count.ShouldBe(0);
+        desc.CreditorBankAccounts.Count.ShouldBe(1);
+    }
+
+    [Test]
+    public void Map_PaymentMeans_MultipleSellerAccounts()
+    {
+        var desc = MapWithPaymentMeans(new PaymentMeansMapping
+        {
+            TypeCode = new FieldMapping { Value = "SEPACreditTransfer" },
+            SellerAccounts =
+            [
+                new FinancialAccountMapping { Iban = new FieldMapping { Value = "DE02120300000000202051" } },
+                new FinancialAccountMapping { Iban = new FieldMapping { Value = "DE89370400440532013000" } },
+                new FinancialAccountMapping { Iban = new FieldMapping { Column = "Leer" } },
+            ],
+        });
+
+        desc.CreditorBankAccounts.Select(a => a.IBAN).ShouldBe(["DE02120300000000202051", "DE89370400440532013000"]);
+    }
+
+    [Test]
+    public void Map_PaymentMeans_UnknownTypeCode_Throws()
+    {
+        Should.Throw<InvalidOperationException>(() => MapWithPaymentMeans(new PaymentMeansMapping
+        {
+            TypeCode = new FieldMapping { Value = "Scheck" },
+        }));
+    }
+
+    [Test]
+    public void Map_PaymentMeans_NotConfigured_NoPaymentMeans()
+    {
+        var desc = MapWithPaymentMeans(null);
+
+        desc.PaymentMeans.ShouldBeNull();
+        desc.CreditorBankAccounts.Count.ShouldBe(0);
+    }
+
+    [Test]
+    public void CheckPaymentMeans_CreditTransferWithoutIban_Warns()
+    {
+        var desc = MapWithPaymentMeans(new PaymentMeansMapping { TypeCode = new FieldMapping { Value = "58" } });
+
+        InvoiceMapper.CheckPaymentMeans(desc, "Extended").ShouldContain(w => w.Contains("BR-61"));
+    }
+
+    [Test]
+    public void CheckPaymentMeans_DirectDebitIncomplete_Warns()
+    {
+        var desc = MapWithPaymentMeans(new PaymentMeansMapping { TypeCode = new FieldMapping { Value = "59" } });
+
+        var warnings = InvoiceMapper.CheckPaymentMeans(desc, "Extended");
+
+        warnings.ShouldContain(w => w.Contains("BT-89"));
+        warnings.ShouldContain(w => w.Contains("BT-90"));
+        warnings.ShouldContain(w => w.Contains("BT-91"));
+    }
+
+    [Test]
+    public void CheckPaymentMeans_XRechnungWithoutPaymentMeans_Warns()
+    {
+        var desc = MapWithPaymentMeans(null);
+
+        InvoiceMapper.CheckPaymentMeans(desc, "XRechnung").ShouldContain(w => w.Contains("BR-DE-1"));
+        InvoiceMapper.CheckPaymentMeans(desc, "Extended").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void CheckPaymentMeans_InvalidIbanChecksum_Warns()
+    {
+        var desc = MapWithPaymentMeans(new PaymentMeansMapping
+        {
+            TypeCode = new FieldMapping { Value = "58" },
+            SellerAccounts = [new FinancialAccountMapping { Iban = new FieldMapping { Value = "DE00120300000000202051" } }],
+        });
+
+        InvoiceMapper.CheckPaymentMeans(desc, "Extended").ShouldContain(w => w.Contains("Prüfsumme"));
+    }
+
+    private static InvoiceDescriptor MapWithPaymentMeans(PaymentMeansMapping? paymentMeans)
+    {
+        var config = new AppConfig
+        {
+            Csv = new CsvConfig(),
+            Mapping = new MappingConfig
+            {
+                Invoice = new InvoiceMapping
+                {
+                    InvoiceNumber = new FieldMapping { Value = "TEST" },
+                    InvoiceDate = new FieldMapping { Value = "01.01.2023" },
+                    Currency = new FieldMapping { Value = "EUR" },
+                },
+                PaymentMeans = paymentMeans,
+            }
+        };
+        var rows = new List<Dictionary<string, string>> { new(StringComparer.OrdinalIgnoreCase) };
+        return InvoiceMapper.Map(rows, config);
+    }
+
     // ── 4.3.7 Edge Cases ──────────────────────────────────────────────────
 
     [Test]

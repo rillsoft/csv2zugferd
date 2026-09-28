@@ -51,6 +51,10 @@ public static class InvoiceMapper
 
         MapTotals(desc, mapping.Totals, firstRow, csvConfig);
         MapPaymentTerms(desc, mapping.PaymentTerms, firstRow, csvConfig.DateFormat);
+        MapPaymentMeans(desc, mapping.PaymentMeans, firstRow);
+
+        foreach (var warning in CheckPaymentMeans(desc, config.Zugferd.Profile))
+            Log.Warning("{Warning}", warning);
 
         return desc;
     }
@@ -490,6 +494,102 @@ public static class InvoiceMapper
         }
     }
 
+    private static void MapPaymentMeans(InvoiceDescriptor desc, PaymentMeansMapping? paymentMeans, Dictionary<string, string> row)
+    {
+        if (paymentMeans == null) return;
+
+        var typeCodeStr = Resolve(paymentMeans.TypeCode, row);
+        if (string.IsNullOrEmpty(typeCodeStr))
+        {
+            Log.Warning("paymentMeans ohne typeCode (BT-81) wird ignoriert");
+            return;
+        }
+
+        var typeCode = ParsePaymentMeansTypeCode(typeCodeStr);
+        var information = NullIfEmpty(Resolve(paymentMeans.Information, row));
+        var isDirectDebit = IsDirectDebit(typeCode);
+        var directDebit = paymentMeans.DirectDebit;
+
+        if (directDebit != null && !isDirectDebit)
+            Log.Warning("paymentMeans.directDebit wird ignoriert, da typeCode {TypeCode} keine Lastschrift ist", typeCode);
+
+        var creditorId = isDirectDebit ? NullIfEmpty(NormalizeAccountId(Resolve(directDebit?.CreditorId, row))) : null;
+        var mandateReference = isDirectDebit ? NullIfEmpty(Resolve(directDebit?.MandateReference, row)) : null;
+
+        desc.SetPaymentMeans(typeCode, information, creditorId, mandateReference);
+        Log.Debug("Zahlungsmittel: {TypeCode}, Gläubiger-ID={CreditorId}, Mandat={Mandate}", typeCode, creditorId, mandateReference);
+
+        var paymentReference = Resolve(paymentMeans.PaymentReference, row);
+        if (!string.IsNullOrEmpty(paymentReference))
+            desc.PaymentReference = paymentReference;
+
+        if (paymentMeans.SellerAccounts != null)
+        {
+            foreach (var account in paymentMeans.SellerAccounts)
+            {
+                var iban = NormalizeAccountId(Resolve(account.Iban, row));
+                if (string.IsNullOrEmpty(iban)) continue;
+
+                var bic = NullIfEmpty(NormalizeAccountId(Resolve(account.Bic, row)));
+                var name = NullIfEmpty(Resolve(account.Name, row));
+                desc.AddCreditorFinancialAccount(iban, bic, name: name);
+                Log.Debug("Verkäuferkonto: IBAN={Iban}, BIC={Bic}", iban, bic);
+            }
+        }
+
+        if (isDirectDebit)
+        {
+            var buyerIban = NormalizeAccountId(Resolve(directDebit?.BuyerIban, row));
+            if (!string.IsNullOrEmpty(buyerIban))
+            {
+                var buyerBic = NullIfEmpty(NormalizeAccountId(Resolve(directDebit?.BuyerBic, row)));
+                desc.AddDebitorFinancialAccount(buyerIban, buyerBic);
+                Log.Debug("Käuferkonto (Lastschrift): IBAN={Iban}", MaskIban(buyerIban));
+            }
+        }
+    }
+
+    public static IReadOnlyList<string> CheckPaymentMeans(InvoiceDescriptor desc, string? profile)
+    {
+        var warnings = new List<string>();
+        var typeCode = desc.PaymentMeans?.TypeCode;
+
+        if (typeCode == null)
+        {
+            if (string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase))
+                warnings.Add("XRechnung verlangt Zahlungsanweisungen (BR-DE-1), paymentMeans fehlt");
+            return warnings;
+        }
+
+        if (typeCode is PaymentMeansTypeCodes.CreditTransferNonSEPA or PaymentMeansTypeCodes.SEPACreditTransfer
+            && desc.CreditorBankAccounts.Count == 0)
+            warnings.Add($"Zahlungsart {(int)typeCode} (Überweisung) ohne IBAN des Verkäufers (BR-61)");
+
+        if (typeCode == PaymentMeansTypeCodes.SEPADirectDebit)
+        {
+            if (string.IsNullOrEmpty(desc.PaymentMeans!.SEPACreditorIdentifier))
+                warnings.Add("SEPA-Lastschrift ohne Gläubiger-ID (BT-90)");
+            if (string.IsNullOrEmpty(desc.PaymentMeans.SEPAMandateReference))
+                warnings.Add("SEPA-Lastschrift ohne Mandatsreferenz (BT-89)");
+            if (desc.DebitorBankAccounts.Count == 0)
+                warnings.Add("SEPA-Lastschrift ohne IBAN des Käufers (BT-91)");
+        }
+
+        foreach (var account in desc.CreditorBankAccounts)
+        {
+            if (!string.IsNullOrEmpty(account.IBAN) && !IsValidIban(account.IBAN))
+                warnings.Add($"IBAN des Verkäufers {account.IBAN} hat eine ungültige Prüfsumme");
+        }
+
+        foreach (var account in desc.DebitorBankAccounts)
+        {
+            if (!string.IsNullOrEmpty(account.IBAN) && !IsValidIban(account.IBAN))
+                warnings.Add($"IBAN des Käufers {MaskIban(account.IBAN)} hat eine ungültige Prüfsumme");
+        }
+
+        return warnings;
+    }
+
     // --- Helper methods ---
 
     private static string Resolve(FieldMapping? field, Dictionary<string, string> row)
@@ -590,6 +690,41 @@ public static class InvoiceMapper
             "LuxemburgVatNumber" => ElectronicAddressSchemeIdentifiers.LuxemburgVatNumber,
             _ => ElectronicAddressSchemeIdentifiers.GermanyVatNumber,
         };
+
+    private static PaymentMeansTypeCodes ParsePaymentMeansTypeCode(string value)
+    {
+        var trimmed = value.Trim();
+        if (int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
+            && Enum.IsDefined(typeof(PaymentMeansTypeCodes), number))
+            return (PaymentMeansTypeCodes)number;
+        if (!int.TryParse(trimmed, out _) && Enum.TryParse<PaymentMeansTypeCodes>(trimmed, true, out var code))
+            return code;
+        throw new InvalidOperationException($"Unbekannter Zahlungsart-Code (BT-81) in paymentMeans.typeCode: '{value}'");
+    }
+
+    private static bool IsDirectDebit(PaymentMeansTypeCodes typeCode) =>
+        typeCode is PaymentMeansTypeCodes.SEPADirectDebit or PaymentMeansTypeCodes.DirectDebit;
+
+    private static string NormalizeAccountId(string value) =>
+        Regex.Replace(value, @"\s+", string.Empty).ToUpperInvariant();
+
+    private static string MaskIban(string iban) =>
+        iban.Length <= 8 ? new string('*', iban.Length) : iban[..4] + new string('*', iban.Length - 8) + iban[^4..];
+
+    private static bool IsValidIban(string iban)
+    {
+        if (iban.Length < 15 || iban.Length > 34 || !iban.All(char.IsAsciiLetterOrDigit))
+            return false;
+
+        var rearranged = iban[4..] + iban[..4];
+        var remainder = 0;
+        foreach (var c in rearranged)
+        {
+            var digits = char.IsAsciiDigit(c) ? c - '0' : char.ToUpperInvariant(c) - 'A' + 10;
+            remainder = digits < 10 ? (remainder * 10 + digits) % 97 : (remainder * 100 + digits) % 97;
+        }
+        return remainder == 1;
+    }
 
     private static QuantityCodes ParseUnitCode(string value) =>
         Enum.TryParse<QuantityCodes>(value, true, out var code) ? code : QuantityCodes.C62;

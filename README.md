@@ -83,6 +83,7 @@ mapping:
   lineItems: {}
   totals: {}
   paymentTerms: {}
+  paymentMeans: {}
 ```
 
 Jedes Mapping-Feld kann entweder einen CSV-Spaltennamen oder einen festen Wert verwenden:
@@ -376,6 +377,90 @@ paymentTerms:
 ```
 
 Eine Beschreibung ist optional, aber in echten Rechnungen meistens sinnvoll.
+
+## Zahlungsmittel und Bankverbindung
+
+Der Abschnitt `paymentMeans` erzeugt die Zahlungsanweisungen nach EN 16931 (BG-16) inklusive Bankverbindung des Verkäufers und SEPA-Lastschriftdaten. Alle Felder unterstützen `column`, `value`, `default` und `rules`.
+
+### Überweisung
+
+```yaml
+paymentMeans:
+  typeCode:
+    value: "58"                 # SEPA-Überweisung
+  information:
+    value: "SEPA-Überweisung"
+  paymentReference:             # Verwendungszweck (BT-83)
+    column: "INVOICE_NO"
+  sellerAccounts:               # ein oder mehrere Konten des Verkäufers
+    - iban:
+        value: "DE02 1203 0000 0000 2020 51"
+      bic:
+        value: "BYLADEM1001"
+      name:
+        value: "Muster GmbH"
+```
+
+### SEPA-Lastschrift
+
+```yaml
+paymentMeans:
+  typeCode:
+    value: "59"                 # SEPA-Lastschrift
+  paymentReference:
+    column: "INVOICE_NO"
+  directDebit:
+    creditorId:                 # Gläubiger-ID (BT-90)
+      value: "DE98ZZZ09999999999"
+    mandateReference:           # Mandatsreferenz (BT-89)
+      column: "MANDATE_ID"
+    buyerIban:                  # zu belastendes Konto des Käufers (BT-91)
+      column: "CUSTOMER_IBAN"
+    buyerBic:
+      column: "CUSTOMER_BIC"
+```
+
+Überweisung und Lastschrift lassen sich pro Rechnung über eine Regel umschalten:
+
+```yaml
+typeCode:
+  default: "58"
+  rules:
+    - when:
+        column: "PAYMENT_METHOD"
+        regex: "(?i)^lastschrift$"
+      value: "59"
+```
+
+`directDebit` wird nur bei `typeCode` 59 oder 49 ausgewertet.
+
+| Feld | EN 16931 | Hinweis |
+|------|----------|---------|
+| `typeCode` | BT-81 | Zahl nach UNTDID 4461 (`30`, `58`, `59`, …) oder Name (`SEPACreditTransfer`, `SEPADirectDebit`, …) |
+| `information` | BT-82 | Freitext zur Zahlungsart |
+| `paymentReference` | BT-83 | Verwendungszweck |
+| `sellerAccounts[].iban` | BT-84 | Leerzeichen werden entfernt |
+| `sellerAccounts[].name` | BT-85 | Kontoinhaber |
+| `sellerAccounts[].bic` | BT-86 | |
+| `directDebit.mandateReference` | BT-89 | |
+| `directDebit.creditorId` | BT-90 | |
+| `directDebit.buyerIban` | BT-91 | wird im Log maskiert |
+
+| Code | Bedeutung |
+|------|-----------|
+| `30` | Überweisung (nicht SEPA) |
+| `58` | SEPA-Überweisung |
+| `59` | SEPA-Lastschrift |
+| `49` | Lastschrift (nicht SEPA) |
+
+Unvollständige Angaben brechen die Verarbeitung nicht ab, sondern erzeugen eine Warnung im Log:
+
+- Überweisung (`30`, `58`) ohne IBAN des Verkäufers (BR-61)
+- SEPA-Lastschrift ohne Gläubiger-ID, Mandatsreferenz oder IBAN des Käufers
+- Profil `XRechnung` ohne `paymentMeans` (BR-DE-1)
+- IBAN mit ungültiger Prüfsumme
+
+Ein unbekannter `typeCode` führt dagegen zu einem Fehler.
 
 ## Konfiguration für `test\0002486.csv`
 
