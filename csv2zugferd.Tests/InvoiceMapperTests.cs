@@ -53,6 +53,15 @@ public class InvoiceMapperTests
     }
 
     [Test]
+    public void Map_RowsMode_BuyerId()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.Buyer.ID.ID.ShouldBe("012345");
+    }
+
+
+    [Test]
     public void Map_RowsMode_BuyerAddress()
     {
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
@@ -66,6 +75,14 @@ public class InvoiceMapperTests
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
 
         desc.Seller.Name.ShouldBe("Lieferant GmbH");
+    }
+
+    [Test]
+    public void Map_RowsMode_SellerId()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.Seller.ID.ID.ShouldBe("1234567890");
     }
 
     [Test]
@@ -93,6 +110,7 @@ public class InvoiceMapperTests
                 Seller = new SellerMapping
                 {
                     Name = new FieldMapping { Value = "Fester Lieferant GmbH" },
+                    Id = new FieldMapping { Value = "10000000001" },
                     PostalCode = new FieldMapping { Value = "12345" },
                     City = new FieldMapping { Value = "Musterstadt" },
                     Street = new FieldMapping { Value = "Musterstrasse 1" },
@@ -108,6 +126,7 @@ public class InvoiceMapperTests
         var desc = InvoiceMapper.Map(rows, config);
 
         desc.Seller.Name.ShouldBe("Fester Lieferant GmbH");
+        desc.Seller.ID.ID.ShouldBe("10000000001");
         desc.Seller.Postcode.ShouldBe("12345");
         desc.Seller.City.ShouldBe("Musterstadt");
         desc.Seller.Street.ShouldBe("Musterstrasse 1");

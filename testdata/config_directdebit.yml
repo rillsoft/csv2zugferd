@@ -32,6 +32,8 @@ mapping:
   buyer:
     name:
       column: "Käufer_Name"
+    id:
+      column: "Käufer_Kundennummer"
     postalCode:
       column: "Käufer_PLZ"
     city:
@@ -53,6 +55,8 @@ mapping:
   seller:
     name:
       column: "Verkäufer_Name"
+    id:
+      column: "Verkäufer_Lieferantennummer"
     postalCode:
       column: "Verkäufer_PLZ"
     city:

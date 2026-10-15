@@ -183,6 +183,8 @@ Pflichtnah sind Rechnungsnummer, Rechnungsdatum und Währung. Wenn die CSV kein 
 buyer:
   name:
     column: "ACCOUNT_NAME"
+  id:
+    column: "ACCOUNT_ID"
   postalCode:
     column: "INVOICE_BILL_CODE"
   city:
@@ -204,7 +206,7 @@ buyer:
 
 Für Länder sollte ein ISO-3166-Alpha-2-Code wie `DE` verwendet werden. Freitext wie `Deutschland` wird nicht zuverlässig als ZUGFeRD-Ländercode erkannt.
 
-`taxScheme` akzeptiert `FC` (Steuernummer) oder `VA` (Umsatzsteuer-ID). Unterstützte Werte für `scheme` bei `electronicAddress`: `GermanyVatNumber`, `LuxemburgVatNumber`.
+`taxScheme` akzeptiert `FC` (Steuernummer) oder `VA` (Umsatzsteuer-ID). Unterstützte Werte für `scheme` bei `electronicAddress`: z.B. `GermanyVatNumber`, `LuxemburgVatNumber`, `ElectronicMailSmtp` (weitere siehe https://github.com/stephanstapel/ZUGFeRD-csharp/blob/master/ZUGFeRD/ElectronicAddressSchemeIdentifiers.cs).
 
 ## Lieferdaten
 

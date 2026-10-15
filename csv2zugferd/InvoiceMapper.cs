@@ -68,11 +68,12 @@ public static class InvoiceMapper
         var city = Resolve(buyer.City, row);
         var street = Resolve(buyer.Street, row);
         var country = ResolveCountry(Resolve(buyer.Country, row));
+        var id = NullIfEmpty(Resolve(buyer.Id, row));
 
         if (!string.IsNullOrEmpty(name))
         {
-            desc.SetBuyer(name, postalCode, city, street, country);
-            Log.Debug("Käufer: {Name}, {PostalCode} {City}, {Country}", name, postalCode, city, country);
+            desc.SetBuyer(name, postalCode, city, street, country, id);
+            Log.Debug("Käufer: {Name}, {PostalCode} {City}, {Country}, {ID}", name, postalCode, city, country, id);
         }
 
         var taxId = Resolve(buyer.TaxId, row);
@@ -101,11 +102,12 @@ public static class InvoiceMapper
         var city = Resolve(seller.City, row);
         var street = Resolve(seller.Street, row);
         var country = ResolveCountry(Resolve(seller.Country, row));
+        var id = NullIfEmpty(Resolve(seller.Id, row));
 
         if (!string.IsNullOrEmpty(name))
         {
-            desc.SetSeller(name, postalCode, city, street, country);
-            Log.Debug("Verkäufer: {Name}, {PostalCode} {City}, {Country}", name, postalCode, city, country);
+            desc.SetSeller(name, postalCode, city, street, country, id);
+            Log.Debug("Verkäufer: {Name}, {PostalCode} {City}, {Country}, {ID}", name, postalCode, city, country, id);
         }
 
         if (seller.TaxRegistrations != null)
@@ -688,6 +690,7 @@ public static class InvoiceMapper
         {
             "GermanyVatNumber" => ElectronicAddressSchemeIdentifiers.GermanyVatNumber,
             "LuxemburgVatNumber" => ElectronicAddressSchemeIdentifiers.LuxemburgVatNumber,
+            "EM" or "ElectronicMailSmtp" => ElectronicAddressSchemeIdentifiers.ElectronicMailSmtp,
             _ => ElectronicAddressSchemeIdentifiers.GermanyVatNumber,
         };
 

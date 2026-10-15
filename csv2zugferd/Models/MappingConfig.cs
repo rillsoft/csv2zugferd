@@ -47,6 +47,7 @@ public class InvoiceMapping
 
 public class BuyerMapping
 {
+    public FieldMapping? Id { get; set; }
     public FieldMapping? Name { get; set; }
     public FieldMapping? PostalCode { get; set; }
     public FieldMapping? City { get; set; }
@@ -60,6 +61,7 @@ public class BuyerMapping
 
 public class SellerMapping
 {
+    public FieldMapping? Id { get; set; }
     public FieldMapping? Name { get; set; }
     public FieldMapping? PostalCode { get; set; }
     public FieldMapping? City { get; set; }
