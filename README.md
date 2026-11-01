@@ -364,6 +364,8 @@ totals:
     value: "0"
 ```
 
+Im manuellen Modus werden nur die Rechnungssummen aus der CSV übernommen. Die Steueraufschlüsselung je Steuersatz (BG-23) wird weiterhin aus den Positionen abgeleitet: Die Steuerbasis je Satz ist die Summe der Positionsnettobeträge, der Steuerbetrag je Satz wird daraus berechnet. Eine Differenz zwischen der berechneten Steuersumme und `taxTotalAmount` wird der letzten Steuergruppe zugeschlagen, damit die Summe der Gruppen exakt `taxTotalAmount` ergibt (BR-CO-14). Bei nur einem Steuersatz entspricht der Steuerbetrag der Gruppe damit genau dem CSV-Wert. Rundungsabweichungen im Cent-Bereich zwischen Steuerbasis × Steuersatz und dem übernommenen Steuerbetrag sind zulässig (BR-CO-17 sieht eine Toleranz vor). Zeilennettobeträge (BT-131) werden auch im manuellen Modus aus Einzelpreis × Menge berechnet; `lineTotalAmount` muss deren Summe entsprechen (BR-CO-10).
+
 Für Rabatt-Szenarien mit Positionsdaten ist `auto` bevorzugt, weil `BT-131`, Steuerbasis und Gesamtsummen dann konsistent aus den Positionen berechnet werden.
 
 ## Zahlungsbedingungen
