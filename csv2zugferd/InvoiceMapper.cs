@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Csv2Zugferd.Models;
 using s2industries.ZUGFeRD;
@@ -22,6 +23,13 @@ public static class InvoiceMapper
         var invoiceDate = ParseDate(invoiceDateStr, csvConfig.DateFormat);
         var desc = InvoiceDescriptor.CreateInvoice(invoiceNo, invoiceDate, currency, orderRefId);
         Log.Debug("Invoice erstellt: Nr={InvoiceNo}, Datum={InvoiceDate}, Währung={Currency}", invoiceNo, invoiceDate, currency);
+
+        var typeCodeStr = Resolve(mapping.Invoice?.TypeCode, firstRow);
+        if (!string.IsNullOrEmpty(typeCodeStr))
+        {
+            desc.Type = ParseInvoiceType(typeCodeStr);
+            Log.Debug("Rechnungstyp (BT-3): {InvoiceType} = {Code}", desc.Type, GetInvoiceTypeCode(desc.Type));
+        }
 
         var name = Resolve(mapping.Invoice?.Name, firstRow);
         if (!string.IsNullOrEmpty(name))
@@ -53,7 +61,7 @@ public static class InvoiceMapper
         MapPaymentTerms(desc, mapping.PaymentTerms, firstRow, csvConfig.DateFormat);
         MapPaymentMeans(desc, mapping.PaymentMeans, firstRow);
 
-        foreach (var warning in CheckPaymentMeans(desc, config.Zugferd.Profile))
+        foreach (var warning in CheckDocument(desc, config.Zugferd.Profile).Concat(CheckPaymentMeans(desc, config.Zugferd.Profile)))
             Log.Warning("{Warning}", warning);
 
         return desc;
@@ -550,6 +558,24 @@ public static class InvoiceMapper
         }
     }
 
+    // Codes, die XRechnung in BT-3 zulässt (KoSIT-Schematron XRechnung-CII-validation.sch, Regel BR-DE-17).
+    private static readonly HashSet<string> XRechnungInvoiceTypeCodes =
+        ["326", "380", "381", "384", "389", "875", "876", "877"];
+
+    public static IReadOnlyList<string> CheckDocument(InvoiceDescriptor desc, string? profile)
+    {
+        var warnings = new List<string>();
+        var typeCode = GetInvoiceTypeCode(desc.Type);
+
+        if (IsXRechnung(profile) && !XRechnungInvoiceTypeCodes.Contains(typeCode))
+            warnings.Add($"XRechnung erlaubt Rechnungstyp {typeCode} (BT-3) nicht; zulässig sind {string.Join(", ", XRechnungInvoiceTypeCodes)} (BR-DE-17)");
+
+        return warnings;
+    }
+
+    private static bool IsXRechnung(string? profile) =>
+        string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase);
+
     public static IReadOnlyList<string> CheckPaymentMeans(InvoiceDescriptor desc, string? profile)
     {
         var warnings = new List<string>();
@@ -557,7 +583,7 @@ public static class InvoiceMapper
 
         if (typeCode == null)
         {
-            if (string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase))
+            if (IsXRechnung(profile))
                 warnings.Add("XRechnung verlangt Zahlungsanweisungen (BR-DE-1), paymentMeans fehlt");
             return warnings;
         }
@@ -713,6 +739,44 @@ public static class InvoiceMapper
             return code;
         throw new InvalidOperationException($"Unbekannter Zahlungsart-Code (BT-81) in paymentMeans.typeCode: '{value}'");
     }
+
+    // Die Zahlenwerte der Enum InvoiceType sind keine UNTDID-1001-Codes; die Codes hängen als
+    // EnumStringValueAttribute an den Enum-Feldern (Invoice = "380", CreditNote = "381", ...).
+    private static readonly (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) InvoiceTypeTable =
+        BuildInvoiceTypeTable();
+
+    private static (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) BuildInvoiceTypeTable()
+    {
+        var byCode = new Dictionary<string, InvoiceType>();
+        var byType = new Dictionary<InvoiceType, string>();
+
+        foreach (var field in typeof(InvoiceType).GetFields(BindingFlags.Public | BindingFlags.Static))
+        {
+            var attribute = field.GetCustomAttribute<EnumStringValueAttribute>();
+            if (attribute == null) continue;
+
+            var type = (InvoiceType)field.GetValue(null)!;
+            byCode.TryAdd(attribute.Value, type);
+            byType.TryAdd(type, attribute.Value);
+            foreach (var legacyValue in attribute.LegacyValues ?? [])
+                byCode.TryAdd(legacyValue, type);
+        }
+
+        return (byCode, byType);
+    }
+
+    private static InvoiceType ParseInvoiceType(string value)
+    {
+        var trimmed = value.Trim();
+        if (InvoiceTypeTable.ByCode.TryGetValue(trimmed, out var byCode))
+            return byCode;
+        if (!int.TryParse(trimmed, out _) && Enum.TryParse<InvoiceType>(trimmed, true, out var byName))
+            return byName;
+        throw new InvalidOperationException($"Unbekannter Rechnungstyp (BT-3) in invoice.typeCode: '{value}'");
+    }
+
+    private static string GetInvoiceTypeCode(InvoiceType type) =>
+        InvoiceTypeTable.ByType.GetValueOrDefault(type) ?? ((int)type).ToString(CultureInfo.InvariantCulture);
 
     private static bool IsDirectDebit(PaymentMeansTypeCodes typeCode) =>
         typeCode is PaymentMeansTypeCodes.SEPADirectDebit or PaymentMeansTypeCodes.DirectDebit;

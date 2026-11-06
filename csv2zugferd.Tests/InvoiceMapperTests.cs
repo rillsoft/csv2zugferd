@@ -42,6 +42,85 @@ public class InvoiceMapperTests
         desc.Name.ShouldBe("WARENRECHNUNG");
     }
 
+    // ── 4.3.1a Rechnungstyp (BT-3) ────────────────────────────────────────
+
+    [Test]
+    public void Map_InvoiceTypeCode_NotConfigured_DefaultsToInvoice()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.Type.ShouldBe(InvoiceType.Invoice);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Value381_SetsCreditNote()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+
+        desc.Type.ShouldBe(InvoiceType.CreditNote);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Name_SetsCorrection()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "correction" });
+
+        desc.Type.ShouldBe(InvoiceType.Correction);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_ViaRule_SetsCreditNote()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+        var rows = TestHelper.ReadTestCsv("test_creditnote.csv", config.Csv);
+
+        InvoiceMapper.Map(rows, config).Type.ShouldBe(InvoiceType.CreditNote);
+
+        foreach (var row in rows)
+            row["Belegart"] = "Rechnung";
+        InvoiceMapper.Map(rows, config).Type.ShouldBe(InvoiceType.Invoice);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Unknown_Throws()
+    {
+        var exception = Should.Throw<InvalidOperationException>(() => MapWithInvoiceTypeCode(new FieldMapping { Value = "999" }));
+
+        exception.Message.ShouldContain("BT-3");
+        exception.Message.ShouldContain("999");
+    }
+
+    [Test]
+    public void CheckDocument_XRechnungWithDisallowedTypeCode_Warns()
+    {
+        var debitNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "383" });
+        var creditNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+
+        InvoiceMapper.CheckDocument(debitNote, "XRechnung").ShouldContain(w => w.Contains("BR-DE-17") && w.Contains("383"));
+        InvoiceMapper.CheckDocument(debitNote, "Extended").ShouldBeEmpty();
+        InvoiceMapper.CheckDocument(creditNote, "XRechnung").ShouldBeEmpty();
+    }
+
+    private static InvoiceDescriptor MapWithInvoiceTypeCode(FieldMapping? typeCode)
+    {
+        var config = new AppConfig
+        {
+            Csv = new CsvConfig(),
+            Mapping = new MappingConfig
+            {
+                Invoice = new InvoiceMapping
+                {
+                    InvoiceNumber = new FieldMapping { Value = "TEST" },
+                    InvoiceDate = new FieldMapping { Value = "01.01.2023" },
+                    Currency = new FieldMapping { Value = "EUR" },
+                    TypeCode = typeCode,
+                },
+            }
+        };
+        var rows = new List<Dictionary<string, string>> { new(StringComparer.OrdinalIgnoreCase) };
+        return InvoiceMapper.Map(rows, config);
+    }
+
     // ── 4.3.2 Käufer / Verkäufer ──────────────────────────────────────────
 
     [Test]

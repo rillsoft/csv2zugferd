@@ -1,0 +1,100 @@
+# ZUGFeRD CSV-to-PDF Konfiguration – Modus: rows, Storno/Gutschrift mit Rechnungstyp (BT-3)
+
+csv:
+  separator: ";"
+  encoding: "UTF-8"
+  hasHeader: true
+  decimalSeparator: ","
+  dateFormat: "dd.MM.yyyy"
+
+zugferd:
+  version: "2.3"
+  profile: "EN16931"
+  format: "CII"
+
+mapping:
+  invoice:
+    invoiceNumber:
+      column: "Rechnungsnummer"
+    invoiceDate:
+      column: "Rechnungsdatum"
+    typeCode:                     # Rechnungstyp (BT-3) nach UNTDID 1001
+      default: "380"
+      rules:
+        - when:
+            column: "Belegart"
+            regex: "(?i)^(gutschrift|storno)"
+          value: "381"
+        - when:
+            column: "Belegart"
+            regex: "(?i)^korrektur"
+          value: "384"
+    currency:
+      value: "EUR"
+    name:
+      value: "STORNORECHNUNG"
+
+  buyer:
+    name:
+      column: "Käufer_Name"
+    postalCode:
+      column: "Käufer_PLZ"
+    city:
+      column: "Käufer_Ort"
+    street:
+      column: "Käufer_Strasse"
+    country:
+      column: "Käufer_Land"
+
+  seller:
+    name:
+      value: "Lieferant GmbH"
+    postalCode:
+      value: "80333"
+    city:
+      value: "München"
+    street:
+      value: "Lieferantenstraße 20"
+    country:
+      value: "DE"
+    taxRegistrations:
+      - value: "DE123456789"
+        scheme: "VA"
+
+  lineItems:
+    mode: "rows"
+    fields:
+      name:
+        column: "Artikel_Name"
+      netUnitPrice:
+        column: "Einzelpreis_Netto"
+      billedQuantity:
+        column: "Menge"
+      unitCode:
+        value: "C62"
+      taxType:
+        value: "VAT"
+      taxCategoryCode:
+        value: "S"
+      taxPercent:
+        column: "MwSt_Prozent"
+
+  totals:
+    mode: "auto"
+
+  paymentTerms:
+    description:
+      value: "Erstattung innerhalb von 30 Tagen"
+    dueDate:
+      column: "Fälligkeitsdatum"
+
+  paymentMeans:
+    typeCode:
+      value: "58"
+    information:
+      value: "SEPA-Überweisung"
+    sellerAccounts:
+      - iban:
+          value: "DE02120300000000202051"
+        bic:
+          value: "BYLADEM1001"

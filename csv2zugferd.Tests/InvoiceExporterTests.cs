@@ -121,6 +121,20 @@ public class InvoiceExporterTests
     }
 
     [Test]
+    public void Export_CreditNote_WritesTypeCode381()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+        var rows = TestHelper.ReadTestCsv("test_creditnote.csv", config.Csv);
+        var desc = InvoiceMapper.Map(rows, config);
+        var path = Path.Combine(_tempDir, "creditnote.xml");
+
+        InvoiceExporter.SaveXml(desc, path, config.Zugferd);
+
+        var xml = XDocument.Load(path);
+        xml.Root!.Element(Rsm + "ExchangedDocument")!.Element(Ram + "TypeCode")!.Value.ShouldBe("381");
+    }
+
+    [Test]
     public void Export_LineTotalsSumEqualsHeaderLineTotalAmount()
     {
         var (config, rows) = TestHelper.CreateRoundingTestCase();
@@ -145,6 +159,7 @@ public class InvoiceExporterTests
         taxBasisAmounts.ShouldBe(["176.94", "217.89"], ignoreOrder: true);
     }
 
+    private static readonly XNamespace Rsm = "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100";
     private static readonly XNamespace Ram = "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100";
 
     private static decimal ParseAmount(string value) =>

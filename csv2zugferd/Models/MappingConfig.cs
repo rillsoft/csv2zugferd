@@ -38,6 +38,7 @@ public class InvoiceMapping
 {
     public FieldMapping? InvoiceNumber { get; set; }
     public FieldMapping? InvoiceDate { get; set; }
+    public FieldMapping? TypeCode { get; set; }
     public FieldMapping? Currency { get; set; }
     public FieldMapping? OrderReferenceId { get; set; }
     public FieldMapping? Name { get; set; }
