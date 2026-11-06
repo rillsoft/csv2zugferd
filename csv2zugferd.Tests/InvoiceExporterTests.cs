@@ -135,6 +135,25 @@ public class InvoiceExporterTests
     }
 
     [Test]
+    public void Export_PrecedingInvoice_WritesInvoiceReferencedDocument()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+        var rows = TestHelper.ReadTestCsv("test_creditnote.csv", config.Csv);
+        var desc = InvoiceMapper.Map(rows, config);
+        var path = Path.Combine(_tempDir, "creditnote.xml");
+
+        InvoiceExporter.SaveXml(desc, path, config.Zugferd);
+
+        var xml = XDocument.Load(path);
+        XNamespace qdt = "urn:un:unece:uncefact:data:standard:QualifiedDataType:100";
+        var reference = xml.Descendants(Ram + "ApplicableHeaderTradeSettlement").Elements(Ram + "InvoiceReferencedDocument").Single();
+        reference.Element(Ram + "IssuerAssignedID")!.Value.ShouldBe("471102");
+        var dateTimeString = reference.Element(Ram + "FormattedIssueDateTime")!.Element(qdt + "DateTimeString")!;
+        dateTimeString.Value.ShouldBe("20130605");
+        dateTimeString.Attribute("format")!.Value.ShouldBe("102");
+    }
+
+    [Test]
     public void Export_LineTotalsSumEqualsHeaderLineTotalAmount()
     {
         var (config, rows) = TestHelper.CreateRoundingTestCase();

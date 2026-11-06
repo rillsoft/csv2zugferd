@@ -33,6 +33,11 @@ mapping:
       value: "EUR"
     name:
       value: "STORNORECHNUNG"
+    precedingInvoices:            # Vorgängerrechnung (BT-25/BT-26), eine oder mehrere
+      - number:
+          column: "Ursprungsrechnung"
+        date:
+          column: "Ursprungsdatum"
 
   buyer:
     name:

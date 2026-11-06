@@ -169,6 +169,11 @@ public class YamlConfigLoaderTests
         typeCode.Rules!.Count.ShouldBe(2);
         typeCode.Rules[0].When!.Column.ShouldBe("Belegart");
         typeCode.Rules[0].Value.ShouldBe("381");
+
+        var precedingInvoices = config.Mapping.Invoice.PrecedingInvoices!;
+        precedingInvoices.Count.ShouldBe(1);
+        precedingInvoices[0].Number!.Column.ShouldBe("Ursprungsrechnung");
+        precedingInvoices[0].Date!.Column.ShouldBe("Ursprungsdatum");
     }
 
     [Test]

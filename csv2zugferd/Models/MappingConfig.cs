@@ -44,6 +44,13 @@ public class InvoiceMapping
     public FieldMapping? Name { get; set; }
     public FieldMapping? ReferenceOrderNo { get; set; }
     public FieldMapping? Note { get; set; }
+    public List<PrecedingInvoiceMapping>? PrecedingInvoices { get; set; }
+}
+
+public class PrecedingInvoiceMapping
+{
+    public FieldMapping? Number { get; set; }
+    public FieldMapping? Date { get; set; }
 }
 
 public class BuyerMapping

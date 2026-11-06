@@ -98,10 +98,10 @@ public class InvoiceMapperTests
 
         InvoiceMapper.CheckDocument(debitNote, "XRechnung").ShouldContain(w => w.Contains("BR-DE-17") && w.Contains("383"));
         InvoiceMapper.CheckDocument(debitNote, "Extended").ShouldBeEmpty();
-        InvoiceMapper.CheckDocument(creditNote, "XRechnung").ShouldBeEmpty();
+        InvoiceMapper.CheckDocument(creditNote, "XRechnung").ShouldNotContain(w => w.Contains("BR-DE-17"));
     }
 
-    private static InvoiceDescriptor MapWithInvoiceTypeCode(FieldMapping? typeCode)
+    private static InvoiceDescriptor MapWithInvoiceTypeCode(FieldMapping? typeCode, List<PrecedingInvoiceMapping>? precedingInvoices = null)
     {
         var config = new AppConfig
         {
@@ -114,11 +114,77 @@ public class InvoiceMapperTests
                     InvoiceDate = new FieldMapping { Value = "01.01.2023" },
                     Currency = new FieldMapping { Value = "EUR" },
                     TypeCode = typeCode,
+                    PrecedingInvoices = precedingInvoices,
                 },
             }
         };
         var rows = new List<Dictionary<string, string>> { new(StringComparer.OrdinalIgnoreCase) };
         return InvoiceMapper.Map(rows, config);
+    }
+
+    // ── 4.3.1b Vorgängerrechnung (BT-25/BT-26) ────────────────────────────
+
+    [Test]
+    public void Map_PrecedingInvoices_NumberAndDate()
+    {
+        var desc = TestHelper.MapFromTestData("config_creditnote.yml", "test_creditnote.csv");
+
+        var references = desc.GetInvoiceReferencedDocuments();
+        references.Count.ShouldBe(1);
+        references[0].ID.ShouldBe("471102");
+        references[0].IssueDateTime.ShouldBe(new DateTime(2013, 6, 5));
+    }
+
+    [Test]
+    public void Map_PrecedingInvoices_TwoEntries_TwoReferences()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+        [
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" }, Date = new FieldMapping { Value = "01.03.2023" } },
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-2" } },
+        ]);
+
+        var references = desc.GetInvoiceReferencedDocuments();
+        references.Select(r => r.ID).ShouldBe(["R-1", "R-2"]);
+        references[0].IssueDateTime.ShouldBe(new DateTime(2023, 3, 1));
+        references[1].IssueDateTime.ShouldBeNull();
+    }
+
+    [Test]
+    public void Map_PrecedingInvoices_EmptyNumber_Skipped()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+        [
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Column = "Leer" } },
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } },
+        ]);
+
+        desc.GetInvoiceReferencedDocuments().Select(r => r.ID).ShouldBe(["R-1"]);
+    }
+
+    [Test]
+    public void CheckDocument_CreditNoteWithoutPrecedingInvoice_Warns()
+    {
+        var creditNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+        var correction = MapWithInvoiceTypeCode(new FieldMapping { Value = "384" });
+        var invoice = MapWithInvoiceTypeCode(new FieldMapping { Value = "380" });
+        var withReference = MapWithInvoiceTypeCode(new FieldMapping { Value = "384" },
+            [new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } }]);
+
+        InvoiceMapper.CheckDocument(creditNote, "Extended").ShouldContain(w => w.Contains("BT-25") && !w.Contains("BR-DE-26"));
+        InvoiceMapper.CheckDocument(correction, "XRechnung").ShouldContain(w => w.Contains("BT-25") && w.Contains("BR-DE-26"));
+        InvoiceMapper.CheckDocument(invoice, "XRechnung").ShouldBeEmpty();
+        InvoiceMapper.CheckDocument(withReference, "XRechnung").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void CheckDocument_MinimumWithPrecedingInvoice_Warns()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+            [new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } }]);
+
+        InvoiceMapper.CheckDocument(desc, "Minimum").ShouldContain(w => w.Contains("MINIMUM") && w.Contains("BT-25"));
+        InvoiceMapper.CheckDocument(desc, "BasicWL").ShouldBeEmpty();
     }
 
     // ── 4.3.2 Käufer / Verkäufer ──────────────────────────────────────────

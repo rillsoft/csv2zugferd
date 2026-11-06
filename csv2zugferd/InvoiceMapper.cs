@@ -43,6 +43,8 @@ public static class InvoiceMapper
         if (!string.IsNullOrEmpty(note))
             desc.AddNote(note);
 
+        MapPrecedingInvoices(desc, mapping.Invoice?.PrecedingInvoices, firstRow, csvConfig.DateFormat);
+
         MapBuyer(desc, mapping.Buyer, firstRow);
         MapSeller(desc, mapping.Seller, firstRow);
         MapDelivery(desc, mapping.Delivery, firstRow, csvConfig.DateFormat);
@@ -65,6 +67,22 @@ public static class InvoiceMapper
             Log.Warning("{Warning}", warning);
 
         return desc;
+    }
+
+    private static void MapPrecedingInvoices(InvoiceDescriptor desc, List<PrecedingInvoiceMapping>? precedingInvoices, Dictionary<string, string> row, string dateFormat)
+    {
+        if (precedingInvoices == null) return;
+
+        foreach (var reference in precedingInvoices)
+        {
+            var number = Resolve(reference.Number, row);
+            if (string.IsNullOrEmpty(number)) continue;
+
+            var dateStr = Resolve(reference.Date, row);
+            var date = !string.IsNullOrEmpty(dateStr) ? ParseDate(dateStr, dateFormat) : (DateTime?)null;
+            desc.AddInvoiceReferencedDocument(number, date, null);
+            Log.Debug("Vorgängerrechnung (BT-25): {Number}, Datum={Date}", number, date);
+        }
     }
 
     private static void MapBuyer(InvoiceDescriptor desc, BuyerMapping? buyer, Dictionary<string, string> row)
@@ -569,6 +587,17 @@ public static class InvoiceMapper
 
         if (IsXRechnung(profile) && !XRechnungInvoiceTypeCodes.Contains(typeCode))
             warnings.Add($"XRechnung erlaubt Rechnungstyp {typeCode} (BT-3) nicht; zulässig sind {string.Join(", ", XRechnungInvoiceTypeCodes)} (BR-DE-17)");
+
+        var hasPrecedingInvoice = desc.GetInvoiceReferencedDocuments().Count > 0;
+
+        if (desc.Type is InvoiceType.CreditNote or InvoiceType.Correction && !hasPrecedingInvoice)
+        {
+            var rule = IsXRechnung(profile) && desc.Type == InvoiceType.Correction ? " (BR-DE-26)" : string.Empty;
+            warnings.Add($"Rechnungstyp {typeCode} ohne Vorgängerrechnung (BT-25), invoice.precedingInvoices fehlt{rule}");
+        }
+
+        if (hasPrecedingInvoice && string.Equals(profile, "minimum", StringComparison.OrdinalIgnoreCase))
+            warnings.Add("Profil MINIMUM enthält keine Vorgängerrechnung (BT-25), invoice.precedingInvoices wird nicht geschrieben");
 
         return warnings;
     }
