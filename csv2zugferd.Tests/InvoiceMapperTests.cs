@@ -42,6 +42,151 @@ public class InvoiceMapperTests
         desc.Name.ShouldBe("WARENRECHNUNG");
     }
 
+    // ── 4.3.1a Rechnungstyp (BT-3) ────────────────────────────────────────
+
+    [Test]
+    public void Map_InvoiceTypeCode_NotConfigured_DefaultsToInvoice()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.Type.ShouldBe(InvoiceType.Invoice);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Value381_SetsCreditNote()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+
+        desc.Type.ShouldBe(InvoiceType.CreditNote);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Name_SetsCorrection()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "correction" });
+
+        desc.Type.ShouldBe(InvoiceType.Correction);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_ViaRule_SetsCreditNote()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+        var rows = TestHelper.ReadTestCsv("test_creditnote.csv", config.Csv);
+
+        InvoiceMapper.Map(rows, config).Type.ShouldBe(InvoiceType.CreditNote);
+
+        foreach (var row in rows)
+            row["Belegart"] = "Rechnung";
+        InvoiceMapper.Map(rows, config).Type.ShouldBe(InvoiceType.Invoice);
+    }
+
+    [Test]
+    public void Map_InvoiceTypeCode_Unknown_Throws()
+    {
+        var exception = Should.Throw<InvalidOperationException>(() => MapWithInvoiceTypeCode(new FieldMapping { Value = "999" }));
+
+        exception.Message.ShouldContain("BT-3");
+        exception.Message.ShouldContain("999");
+    }
+
+    [Test]
+    public void CheckDocument_XRechnungWithDisallowedTypeCode_Warns()
+    {
+        var debitNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "383" });
+        var creditNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+
+        InvoiceMapper.CheckDocument(debitNote, "XRechnung").ShouldContain(w => w.Contains("BR-DE-17") && w.Contains("383"));
+        InvoiceMapper.CheckDocument(debitNote, "Extended").ShouldBeEmpty();
+        InvoiceMapper.CheckDocument(creditNote, "XRechnung").ShouldNotContain(w => w.Contains("BR-DE-17"));
+    }
+
+    private static InvoiceDescriptor MapWithInvoiceTypeCode(FieldMapping? typeCode, List<PrecedingInvoiceMapping>? precedingInvoices = null)
+    {
+        var config = new AppConfig
+        {
+            Csv = new CsvConfig(),
+            Mapping = new MappingConfig
+            {
+                Invoice = new InvoiceMapping
+                {
+                    InvoiceNumber = new FieldMapping { Value = "TEST" },
+                    InvoiceDate = new FieldMapping { Value = "01.01.2023" },
+                    Currency = new FieldMapping { Value = "EUR" },
+                    TypeCode = typeCode,
+                    PrecedingInvoices = precedingInvoices,
+                },
+            }
+        };
+        var rows = new List<Dictionary<string, string>> { new(StringComparer.OrdinalIgnoreCase) };
+        return InvoiceMapper.Map(rows, config);
+    }
+
+    // ── 4.3.1b Vorgängerrechnung (BT-25/BT-26) ────────────────────────────
+
+    [Test]
+    public void Map_PrecedingInvoices_NumberAndDate()
+    {
+        var desc = TestHelper.MapFromTestData("config_creditnote.yml", "test_creditnote.csv");
+
+        var references = desc.GetInvoiceReferencedDocuments();
+        references.Count.ShouldBe(1);
+        references[0].ID.ShouldBe("471102");
+        references[0].IssueDateTime.ShouldBe(new DateTime(2013, 6, 5));
+    }
+
+    [Test]
+    public void Map_PrecedingInvoices_TwoEntries_TwoReferences()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+        [
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" }, Date = new FieldMapping { Value = "01.03.2023" } },
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-2" } },
+        ]);
+
+        var references = desc.GetInvoiceReferencedDocuments();
+        references.Select(r => r.ID).ShouldBe(["R-1", "R-2"]);
+        references[0].IssueDateTime.ShouldBe(new DateTime(2023, 3, 1));
+        references[1].IssueDateTime.ShouldBeNull();
+    }
+
+    [Test]
+    public void Map_PrecedingInvoices_EmptyNumber_Skipped()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+        [
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Column = "Leer" } },
+            new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } },
+        ]);
+
+        desc.GetInvoiceReferencedDocuments().Select(r => r.ID).ShouldBe(["R-1"]);
+    }
+
+    [Test]
+    public void CheckDocument_CreditNoteWithoutPrecedingInvoice_Warns()
+    {
+        var creditNote = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" });
+        var correction = MapWithInvoiceTypeCode(new FieldMapping { Value = "384" });
+        var invoice = MapWithInvoiceTypeCode(new FieldMapping { Value = "380" });
+        var withReference = MapWithInvoiceTypeCode(new FieldMapping { Value = "384" },
+            [new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } }]);
+
+        InvoiceMapper.CheckDocument(creditNote, "Extended").ShouldContain(w => w.Contains("BT-25") && !w.Contains("BR-DE-26"));
+        InvoiceMapper.CheckDocument(correction, "XRechnung").ShouldContain(w => w.Contains("BT-25") && w.Contains("BR-DE-26"));
+        InvoiceMapper.CheckDocument(invoice, "XRechnung").ShouldBeEmpty();
+        InvoiceMapper.CheckDocument(withReference, "XRechnung").ShouldBeEmpty();
+    }
+
+    [Test]
+    public void CheckDocument_MinimumWithPrecedingInvoice_Warns()
+    {
+        var desc = MapWithInvoiceTypeCode(new FieldMapping { Value = "381" },
+            [new PrecedingInvoiceMapping { Number = new FieldMapping { Value = "R-1" } }]);
+
+        InvoiceMapper.CheckDocument(desc, "Minimum").ShouldContain(w => w.Contains("MINIMUM") && w.Contains("BT-25"));
+        InvoiceMapper.CheckDocument(desc, "BasicWL").ShouldBeEmpty();
+    }
+
     // ── 4.3.2 Käufer / Verkäufer ──────────────────────────────────────────
 
     [Test]
@@ -611,6 +756,82 @@ public class InvoiceMapperTests
 
         desc.AnyApplicableTradeTaxes().ShouldBeTrue();
         desc.DuePayableAmount!.Value.ShouldBe(119.00m);
+    }
+
+    [Test]
+    public void Map_AutoTotals_RoundsLineTotalsBeforeSumming()
+    {
+        var (config, rows) = TestHelper.CreateRoundingTestCase();
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.TradeLineItems.Select(item => item.LineTotalAmount)
+            .ShouldBe([88.47m, 14.41m, 88.47m, 19.55m, 67.06m, 67.06m, 2.00m, 47.81m]);
+        desc.LineTotalAmount!.Value.ShouldBe(394.83m);
+        desc.TaxBasisAmount!.Value.ShouldBe(394.83m);
+        var taxes = desc.GetApplicableTradeTaxes();
+        taxes.Single(tax => tax.Percent == 19m).BasisAmount.ShouldBe(217.89m);
+        taxes.Single(tax => tax.Percent == 19m).TaxAmount.ShouldBe(41.40m);
+        taxes.Single(tax => tax.Percent == 7m).BasisAmount.ShouldBe(176.94m);
+        taxes.Single(tax => tax.Percent == 7m).TaxAmount.ShouldBe(12.39m);
+        desc.TaxTotalAmount!.Value.ShouldBe(53.79m);
+        desc.GrandTotalAmount!.Value.ShouldBe(448.62m);
+    }
+
+    [Test]
+    public void Map_ManualTotals_TaxBasisUsesRoundedLineTotals()
+    {
+        var (config, rows) = TestHelper.CreateRoundingTestCase("manual");
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.LineTotalAmount!.Value.ShouldBe(394.83m);
+        var taxes = desc.GetApplicableTradeTaxes();
+        taxes.Single(tax => tax.Percent == 19m).BasisAmount.ShouldBe(217.89m);
+        taxes.Single(tax => tax.Percent == 7m).BasisAmount.ShouldBe(176.94m);
+        taxes.Sum(tax => tax.TaxAmount).ShouldBe(53.79m);
+    }
+
+    [Test]
+    public void Map_AutoTotals_NegativeQuantities_RoundsConsistently()
+    {
+        var config = new AppConfig
+        {
+            Csv = new CsvConfig { DecimalSeparator = "." },
+            Mapping = new MappingConfig
+            {
+                Invoice = new InvoiceMapping
+                {
+                    InvoiceNumber = new FieldMapping { Value = "K-2026-001" },
+                    InvoiceDate = new FieldMapping { Value = "2026-01-15" },
+                    Currency = new FieldMapping { Value = "EUR" },
+                },
+                LineItems = new LineItemsMapping
+                {
+                    Mode = "rows",
+                    Fields = new LineItemFieldsMapping
+                    {
+                        Name = new FieldMapping { Column = "Name" },
+                        NetUnitPrice = new FieldMapping { Column = "Price" },
+                        BilledQuantity = new FieldMapping { Column = "Quantity" },
+                        TaxPercent = new FieldMapping { Value = "19" },
+                    },
+                },
+            }
+        };
+        var rows = new List<Dictionary<string, string>>
+        {
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "Rücknahme A", ["Price"] = "51.45", ["Quantity"] = "-0.28" },
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "Rücknahme B", ["Price"] = "1.115", ["Quantity"] = "-3" },
+        };
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.TradeLineItems.Select(item => item.LineTotalAmount).ShouldBe([-14.41m, -3.35m]);
+        desc.LineTotalAmount!.Value.ShouldBe(-17.76m);
+        desc.GetApplicableTradeTaxes().Single().BasisAmount.ShouldBe(-17.76m);
+        desc.GetApplicableTradeTaxes().Single().TaxAmount.ShouldBe(-3.37m);
+        desc.GrandTotalAmount!.Value.ShouldBe(-21.13m);
     }
 
     // ── 4.3.6 Zahlungsbedingungen ─────────────────────────────────────────

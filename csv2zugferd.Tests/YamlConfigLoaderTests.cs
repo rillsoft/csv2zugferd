@@ -160,6 +160,23 @@ public class YamlConfigLoaderTests
     }
 
     [Test]
+    public void Load_CreditNoteConfig_InvoiceTypeCodeRules()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+
+        var typeCode = config.Mapping.Invoice!.TypeCode!;
+        typeCode.Default.ShouldBe("380");
+        typeCode.Rules!.Count.ShouldBe(2);
+        typeCode.Rules[0].When!.Column.ShouldBe("Belegart");
+        typeCode.Rules[0].Value.ShouldBe("381");
+
+        var precedingInvoices = config.Mapping.Invoice.PrecedingInvoices!;
+        precedingInvoices.Count.ShouldBe(1);
+        precedingInvoices[0].Number!.Column.ShouldBe("Ursprungsrechnung");
+        precedingInvoices[0].Date!.Column.ShouldBe("Ursprungsdatum");
+    }
+
+    [Test]
     public void Load_NonExistentFile_ThrowsException()
     {
         Should.Throw<Exception>(() => YamlConfigLoader.Load("nonexistent_file_xyz.yml"));

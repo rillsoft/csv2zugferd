@@ -1,4 +1,5 @@
 ﻿using System.Globalization;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using Csv2Zugferd.Models;
 using s2industries.ZUGFeRD;
@@ -23,6 +24,13 @@ public static class InvoiceMapper
         var desc = InvoiceDescriptor.CreateInvoice(invoiceNo, invoiceDate, currency, orderRefId);
         Log.Debug("Invoice erstellt: Nr={InvoiceNo}, Datum={InvoiceDate}, Währung={Currency}", invoiceNo, invoiceDate, currency);
 
+        var typeCodeStr = Resolve(mapping.Invoice?.TypeCode, firstRow);
+        if (!string.IsNullOrEmpty(typeCodeStr))
+        {
+            desc.Type = ParseInvoiceType(typeCodeStr);
+            Log.Debug("Rechnungstyp (BT-3): {InvoiceType} = {Code}", desc.Type, GetInvoiceTypeCode(desc.Type));
+        }
+
         var name = Resolve(mapping.Invoice?.Name, firstRow);
         if (!string.IsNullOrEmpty(name))
             desc.Name = name;
@@ -34,6 +42,8 @@ public static class InvoiceMapper
         var note = Resolve(mapping.Invoice?.Note, firstRow);
         if (!string.IsNullOrEmpty(note))
             desc.AddNote(note);
+
+        MapPrecedingInvoices(desc, mapping.Invoice?.PrecedingInvoices, firstRow, csvConfig.DateFormat);
 
         MapBuyer(desc, mapping.Buyer, firstRow);
         MapSeller(desc, mapping.Seller, firstRow);
@@ -53,10 +63,26 @@ public static class InvoiceMapper
         MapPaymentTerms(desc, mapping.PaymentTerms, firstRow, csvConfig.DateFormat);
         MapPaymentMeans(desc, mapping.PaymentMeans, firstRow);
 
-        foreach (var warning in CheckPaymentMeans(desc, config.Zugferd.Profile))
+        foreach (var warning in CheckDocument(desc, config.Zugferd.Profile).Concat(CheckPaymentMeans(desc, config.Zugferd.Profile)))
             Log.Warning("{Warning}", warning);
 
         return desc;
+    }
+
+    private static void MapPrecedingInvoices(InvoiceDescriptor desc, List<PrecedingInvoiceMapping>? precedingInvoices, Dictionary<string, string> row, string dateFormat)
+    {
+        if (precedingInvoices == null) return;
+
+        foreach (var reference in precedingInvoices)
+        {
+            var number = Resolve(reference.Number, row);
+            if (string.IsNullOrEmpty(number)) continue;
+
+            var dateStr = Resolve(reference.Date, row);
+            var date = !string.IsNullOrEmpty(dateStr) ? ParseDate(dateStr, dateFormat) : (DateTime?)null;
+            desc.AddInvoiceReferencedDocument(number, date, null);
+            Log.Debug("Vorgängerrechnung (BT-25): {Number}, Datum={Date}", number, date);
+        }
     }
 
     private static void MapBuyer(InvoiceDescriptor desc, BuyerMapping? buyer, Dictionary<string, string> row)
@@ -180,6 +206,7 @@ public static class InvoiceMapper
             var discountPercent = GetDiscountPercent(fields.DiscountPercent, row, csvConfig);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
+            var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
 
             var item = desc.AddTradeLineItem(
                 name: name,
@@ -189,7 +216,7 @@ public static class InvoiceMapper
                 unitQuantity: 1m,
                 grossUnitPrice: grossUnitPrice,
                 billedQuantity: quantity,
-                lineTotalAmount: null,
+                lineTotalAmount: lineTotal,
                 taxType: taxType,
                 categoryCode: categoryCode,
                 taxPercent: taxPercent,
@@ -207,7 +234,7 @@ public static class InvoiceMapper
                 unitCode,
                 taxType,
                 categoryCode);
-            MapAllowanceCharge(item, lineItems.AllowanceCharge, row, csvConfig, discountedNetPrice, quantity);
+            MapAllowanceCharge(item, lineItems.AllowanceCharge, row, csvConfig, lineTotal);
         }
     }
 
@@ -303,6 +330,7 @@ public static class InvoiceMapper
             var discountPercent = ParseDecimal(ResolveColumnValue(fields?.DiscountPercent, discountFragment), csvConfig.DecimalSeparator);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
+            var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
 
             var unitCodeValue = ResolveColumnValue(fixedUnitCode);
             var taxTypeValue = ResolveColumnValue(fixedTaxType);
@@ -319,7 +347,7 @@ public static class InvoiceMapper
                 unitQuantity: 1m,
                 grossUnitPrice: grossUnitPrice,
                 billedQuantity: quantity,
-                lineTotalAmount: null,
+                lineTotalAmount: lineTotal,
                 taxType: taxType,
                 categoryCode: categoryCode,
                 taxPercent: taxPercent,
@@ -341,7 +369,7 @@ public static class InvoiceMapper
         }
     }
 
-    private static void MapAllowanceCharge(TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, CsvConfig csvConfig, decimal netPrice, decimal quantity)
+    private static void MapAllowanceCharge(TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, CsvConfig csvConfig, decimal basisAmount)
     {
         if (charge == null || !charge.Enabled) return;
 
@@ -354,8 +382,7 @@ public static class InvoiceMapper
         var reason = Resolve(charge.Reason, row) ?? "Rabatt";
         var isDiscount = Resolve(charge.IsDiscount, row)?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
 
-        var basisAmount = netPrice * quantity;
-        var actualAmount = basisAmount * (percent / 100m);
+        var actualAmount = RoundAmount(basisAmount * (percent / 100m));
 
         if (isDiscount)
         {
@@ -401,7 +428,7 @@ public static class InvoiceMapper
 
         foreach (var item in desc.TradeLineItems)
         {
-            var lineTotal = item.NetUnitPrice * item.BilledQuantity;
+            var lineTotal = GetLineTotal(item);
             lineTotalAmount += lineTotal;
 
             decimal lineAllowance = 0m;
@@ -425,7 +452,7 @@ public static class InvoiceMapper
 
         foreach (var (percent, basisAmount) in taxGroups)
         {
-            var taxAmount = Math.Round(basisAmount * percent / 100m, 2);
+            var taxAmount = RoundAmount(basisAmount * percent / 100m);
             taxTotalAmount += taxAmount;
             desc.AddApplicableTradeTax(basisAmount, percent, taxAmount, TaxTypes.VAT, TaxCategoryCodes.S);
         }
@@ -449,7 +476,7 @@ public static class InvoiceMapper
             var lineAllowance = item.GetTradeAllowanceCharges()
                 .Where(charge => charge.ChargeIndicator == false)
                 .Sum(charge => charge.ActualAmount);
-            var taxableAmount = item.NetUnitPrice * item.BilledQuantity - lineAllowance;
+            var taxableAmount = GetLineTotal(item) - lineAllowance;
             var key = (item.TaxPercent, item.TaxType ?? TaxTypes.VAT, item.TaxCategoryCode ?? TaxCategoryCodes.S);
 
             if (!taxGroups.TryAdd(key, taxableAmount))
@@ -463,7 +490,7 @@ public static class InvoiceMapper
                 group.Key.Type,
                 group.Key.Category,
                 BasisAmount = group.Value,
-                TaxAmount = Math.Round(group.Value * group.Key.Percent / 100m, 2),
+                TaxAmount = RoundAmount(group.Value * group.Key.Percent / 100m),
             })
             .ToList();
 
@@ -549,6 +576,35 @@ public static class InvoiceMapper
         }
     }
 
+    // Codes, die XRechnung in BT-3 zulässt (KoSIT-Schematron XRechnung-CII-validation.sch, Regel BR-DE-17).
+    private static readonly HashSet<string> XRechnungInvoiceTypeCodes =
+        ["326", "380", "381", "384", "389", "875", "876", "877"];
+
+    public static IReadOnlyList<string> CheckDocument(InvoiceDescriptor desc, string? profile)
+    {
+        var warnings = new List<string>();
+        var typeCode = GetInvoiceTypeCode(desc.Type);
+
+        if (IsXRechnung(profile) && !XRechnungInvoiceTypeCodes.Contains(typeCode))
+            warnings.Add($"XRechnung erlaubt Rechnungstyp {typeCode} (BT-3) nicht; zulässig sind {string.Join(", ", XRechnungInvoiceTypeCodes)} (BR-DE-17)");
+
+        var hasPrecedingInvoice = desc.GetInvoiceReferencedDocuments().Count > 0;
+
+        if (desc.Type is InvoiceType.CreditNote or InvoiceType.Correction && !hasPrecedingInvoice)
+        {
+            var rule = IsXRechnung(profile) && desc.Type == InvoiceType.Correction ? " (BR-DE-26)" : string.Empty;
+            warnings.Add($"Rechnungstyp {typeCode} ohne Vorgängerrechnung (BT-25), invoice.precedingInvoices fehlt{rule}");
+        }
+
+        if (hasPrecedingInvoice && string.Equals(profile, "minimum", StringComparison.OrdinalIgnoreCase))
+            warnings.Add("Profil MINIMUM enthält keine Vorgängerrechnung (BT-25), invoice.precedingInvoices wird nicht geschrieben");
+
+        return warnings;
+    }
+
+    private static bool IsXRechnung(string? profile) =>
+        string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase);
+
     public static IReadOnlyList<string> CheckPaymentMeans(InvoiceDescriptor desc, string? profile)
     {
         var warnings = new List<string>();
@@ -556,7 +612,7 @@ public static class InvoiceMapper
 
         if (typeCode == null)
         {
-            if (string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase))
+            if (IsXRechnung(profile))
                 warnings.Add("XRechnung verlangt Zahlungsanweisungen (BR-DE-1), paymentMeans fehlt");
             return warnings;
         }
@@ -651,6 +707,17 @@ public static class InvoiceMapper
     private static decimal ApplyDiscount(decimal netPrice, decimal discountPercent) =>
         discountPercent > 0 ? Math.Round(netPrice * (1m - discountPercent / 100m), 4) : netPrice;
 
+    // Kaufmännische Rundung auf zwei Stellen, wie sie die Bibliothek beim Schreiben der Beträge anwendet.
+    private static decimal RoundAmount(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    // Zeilennettobetrag (BT-131): einmal berechnen, gerundet an die Bibliothek übergeben und für alle Summen wiederverwenden.
+    private static decimal CalculateLineTotal(decimal netUnitPrice, decimal quantity) =>
+        RoundAmount(netUnitPrice * quantity);
+
+    private static decimal GetLineTotal(TradeLineItem item) =>
+        item.LineTotalAmount ?? CalculateLineTotal(item.NetUnitPrice, item.BilledQuantity);
+
     private static DateTime ParseDate(string value, string format)
     {
         if (string.IsNullOrEmpty(value)) return DateTime.MinValue;
@@ -701,6 +768,44 @@ public static class InvoiceMapper
             return code;
         throw new InvalidOperationException($"Unbekannter Zahlungsart-Code (BT-81) in paymentMeans.typeCode: '{value}'");
     }
+
+    // Die Zahlenwerte der Enum InvoiceType sind keine UNTDID-1001-Codes; die Codes hängen als
+    // EnumStringValueAttribute an den Enum-Feldern (Invoice = "380", CreditNote = "381", ...).
+    private static readonly (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) InvoiceTypeTable =
+        BuildInvoiceTypeTable();
+
+    private static (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) BuildInvoiceTypeTable()
+    {
+        var byCode = new Dictionary<string, InvoiceType>();
+        var byType = new Dictionary<InvoiceType, string>();
+
+        foreach (var field in typeof(InvoiceType).GetFields(BindingFlags.Public | BindingFlags.Static))
+        {
+            var attribute = field.GetCustomAttribute<EnumStringValueAttribute>();
+            if (attribute == null) continue;
+
+            var type = (InvoiceType)field.GetValue(null)!;
+            byCode.TryAdd(attribute.Value, type);
+            byType.TryAdd(type, attribute.Value);
+            foreach (var legacyValue in attribute.LegacyValues ?? [])
+                byCode.TryAdd(legacyValue, type);
+        }
+
+        return (byCode, byType);
+    }
+
+    private static InvoiceType ParseInvoiceType(string value)
+    {
+        var trimmed = value.Trim();
+        if (InvoiceTypeTable.ByCode.TryGetValue(trimmed, out var byCode))
+            return byCode;
+        if (!int.TryParse(trimmed, out _) && Enum.TryParse<InvoiceType>(trimmed, true, out var byName))
+            return byName;
+        throw new InvalidOperationException($"Unbekannter Rechnungstyp (BT-3) in invoice.typeCode: '{value}'");
+    }
+
+    private static string GetInvoiceTypeCode(InvoiceType type) =>
+        InvoiceTypeTable.ByType.GetValueOrDefault(type) ?? ((int)type).ToString(CultureInfo.InvariantCulture);
 
     private static bool IsDirectDebit(PaymentMeansTypeCodes typeCode) =>
         typeCode is PaymentMeansTypeCodes.SEPADirectDebit or PaymentMeansTypeCodes.DirectDebit;
