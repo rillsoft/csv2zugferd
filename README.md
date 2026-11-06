@@ -128,6 +128,8 @@ Verkäuferdaten können vollständig in der YAML-Konfiguration festgelegt werden
 seller:
   name:
     value: "Muster Lieferant GmbH"
+  id:
+    value: "1234567890"
   postalCode:
     value: "80333"
   city:
@@ -145,6 +147,8 @@ seller:
     value: "DE123456789"
     scheme: "GermanyVatNumber"
 ```
+
+`id` ist optional und trägt die Verkäuferkennung (BT-29), zum Beispiel die Lieferantennummer, unter der der Käufer den Verkäufer führt. Sie erscheint im XML als `ram:ID` der `SellerTradeParty`. Ohne `id` wird kein Element geschrieben.
 
 Unterstützte Steuer-Schemata:
 
@@ -250,6 +254,8 @@ Eine lauffähige Beispielkonfiguration ist `testdata/config_creditnote.yml` mit 
 buyer:
   name:
     column: "ACCOUNT_NAME"
+  id:
+    column: "ACCOUNT_ID"
   postalCode:
     column: "INVOICE_BILL_CODE"
   city:
@@ -269,9 +275,21 @@ buyer:
     scheme: "GermanyVatNumber"
 ```
 
+`id` ist optional und trägt die Käuferkennung (BT-46), in der Regel die Kundennummer des Käufers beim Verkäufer. Sie erscheint im XML als `ram:ID` der `BuyerTradeParty`. Ohne `id` wird kein Element geschrieben. Wie alle Felder unterstützt `id` auch `value`, `default` und `rules`.
+
 Für Länder sollte ein ISO-3166-Alpha-2-Code wie `DE` verwendet werden. Freitext wie `Deutschland` wird nicht zuverlässig als ZUGFeRD-Ländercode erkannt.
 
-`taxScheme` akzeptiert `FC` (Steuernummer) oder `VA` (Umsatzsteuer-ID). Unterstützte Werte für `scheme` bei `electronicAddress`: `GermanyVatNumber`, `LuxemburgVatNumber`.
+`taxScheme` akzeptiert `FC` (Steuernummer) oder `VA` (Umsatzsteuer-ID).
+
+Unterstützte Werte für `scheme` bei `electronicAddress`:
+
+| Scheme | Bedeutung |
+|--------|-----------|
+| `GermanyVatNumber` | Deutsche Umsatzsteuer-ID (EAS 9930) |
+| `LuxemburgVatNumber` | Luxemburgische Umsatzsteuer-ID (EAS 9938) |
+| `ElectronicMailSmtp` oder `EM` | E-Mail-Adresse (EAS `EM`) |
+
+Andere Werte fallen auf `GermanyVatNumber` zurück. Die vollständige Liste der Kennungen steht in [ZUGFeRD-csharp](https://github.com/stephanstapel/ZUGFeRD-csharp/blob/master/ZUGFeRD/ElectronicAddressSchemeIdentifiers.cs); weitere Werte müssen erst im Mapper ergänzt werden.
 
 ## Lieferdaten
 

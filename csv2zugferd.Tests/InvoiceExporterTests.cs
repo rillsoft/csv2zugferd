@@ -58,6 +58,26 @@ public class InvoiceExporterTests
     }
 
     [Test]
+    public void SaveXml_ContainsBuyerId()
+    {
+        var path = Path.Combine(_tempDir, "test.xml");
+        InvoiceExporter.SaveXml(_desc, path, _zugferdConfig);
+
+        var content = File.ReadAllText(path);
+        content.ShouldContain("<ram:ID>012345</ram:ID>");
+    }
+
+    [Test]
+    public void SaveXml_ContainsSellerId()
+    {
+        var path = Path.Combine(_tempDir, "test.xml");
+        InvoiceExporter.SaveXml(_desc, path, _zugferdConfig);
+
+        var content = File.ReadAllText(path);
+        content.ShouldContain("<ram:ID>1234567890</ram:ID>");
+    }
+
+    [Test]
     public void SaveXml_ContainsInvoiceNumber()
     {
         var path = Path.Combine(_tempDir, "test.xml");
