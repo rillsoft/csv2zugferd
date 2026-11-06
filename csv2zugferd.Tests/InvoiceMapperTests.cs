@@ -676,8 +676,8 @@ public class InvoiceMapperTests
         };
         var rows = new List<Dictionary<string, string>>
         {
-            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "RÃ¼cknahme A", ["Price"] = "51.45", ["Quantity"] = "-0.28" },
-            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "RÃ¼cknahme B", ["Price"] = "1.115", ["Quantity"] = "-3" },
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "Rücknahme A", ["Price"] = "51.45", ["Quantity"] = "-0.28" },
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "Rücknahme B", ["Price"] = "1.115", ["Quantity"] = "-3" },
         };
 
         var desc = InvoiceMapper.Map(rows, config);

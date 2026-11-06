@@ -23,8 +23,8 @@ public static class TestHelper
     }
 
     /// <summary>
-    /// Testfall mit Mengen, deren ZeilennettobetrÃ¤ge mehr als zwei Nachkommastellen haben
-    /// (0,28 Ã— 51,45 = 14,406; 0,38 Ã— 51,45 = 19,551; 2,65 Ã— 18,04 = 47,806).
+    /// Testfall mit Mengen, deren Zeilennettobeträge mehr als zwei Nachkommastellen haben
+    /// (0,28 × 51,45 = 14,406; 0,38 × 51,45 = 19,551; 2,65 × 18,04 = 47,806).
     /// Erwartung: Zeilensumme 394,83; Steuerbasis 19 % = 217,89; 7 % = 176,94; Steuer 53,79; Brutto 448,62.
     /// </summary>
     public static (AppConfig Config, List<Dictionary<string, string>> Rows) CreateRoundingTestCase(string totalsMode = "auto")
@@ -45,8 +45,8 @@ public static class TestHelper
                 {
                     Name = new FieldMapping { Value = "Lieferant GmbH" },
                     PostalCode = new FieldMapping { Value = "80333" },
-                    City = new FieldMapping { Value = "MÃ¼nchen" },
-                    Street = new FieldMapping { Value = "LieferantenstraÃŸe 20" },
+                    City = new FieldMapping { Value = "München" },
+                    Street = new FieldMapping { Value = "Lieferantenstraße 20" },
                     Country = new FieldMapping { Value = "DE" },
                     TaxRegistrations = [new TaxRegistrationMapping { Value = "DE123456789", Scheme = "VA" }],
                 },
@@ -55,7 +55,7 @@ public static class TestHelper
                     Name = new FieldMapping { Value = "Kunden Mitte AG" },
                     PostalCode = new FieldMapping { Value = "69876" },
                     City = new FieldMapping { Value = "Frankfurt" },
-                    Street = new FieldMapping { Value = "KundenstraÃŸe 15" },
+                    Street = new FieldMapping { Value = "Kundenstraße 15" },
                     Country = new FieldMapping { Value = "DE" },
                 },
                 LineItems = new LineItemsMapping
