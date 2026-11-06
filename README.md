@@ -163,6 +163,8 @@ invoice:
     column: "INVOICE_NO"
   invoiceDate:
     column: "INVOICE_DUEDATE"
+  typeCode:                     # Rechnungstyp (BT-3), ohne Angabe 380
+    value: "380"
   currency:
     value: "EUR"
   orderReferenceId:
@@ -176,6 +178,71 @@ invoice:
 ```
 
 Pflichtnah sind Rechnungsnummer, Rechnungsdatum und Währung. Wenn die CSV kein echtes Rechnungsdatum enthält, muss eine passende Ersatzspalte bewusst gewählt werden.
+
+### Rechnungstyp, Storno und Gutschrift
+
+`typeCode` setzt den Rechnungstyp (BT-3, `rsm:ExchangedDocument/ram:TypeCode`). Ohne Angabe wird `380` geschrieben. Zulässig ist eine Zahl nach UNTDID 1001 oder der Name aus der ZUGFeRD-Bibliothek (`Invoice`, `CreditNote`, `Correction`, `SelfBilledInvoice`, …); ein unbekannter Wert führt zu einem Fehler.
+
+| Code | Bedeutung | Einsatz |
+|------|-----------|---------|
+| `380` | Rechnung | Standard |
+| `381` | Gutschrift (kaufmännisch), Stornorechnung | vollständiges Storno, Rückerstattung |
+| `384` | Rechnungskorrektur | Teilkorrektur einer bestehenden Rechnung (Preis, Menge, Steuersatz) |
+| `389` | Selbstfakturierung (Gutschriftsverfahren, § 14 Abs. 2 UStG) | der Leistungsempfänger rechnet ab; Aussteller und Verkäufer sind vertauscht |
+| `326`, `386`, `875`–`877` | Teil-, Vorauszahlungs- und Bau-Abschlagsrechnungen | werden durchgereicht |
+
+Ein Storno ist fachlich keine Gutschrift im Sinne des Gutschriftsverfahrens. Wer „Gutschrift“ meint und selbst der Leistende ist, braucht `381` oder `384`, nicht `389`.
+
+Rechnung und Storno lassen sich aus einer CSV-Spalte steuern:
+
+```yaml
+invoice:
+  typeCode:
+    default: "380"
+    rules:
+      - when:
+          column: "Belegart"
+          regex: "(?i)^(gutschrift|storno)"
+        value: "381"
+      - when:
+          column: "Belegart"
+          regex: "(?i)^korrektur"
+        value: "384"
+  precedingInvoices:            # Vorgängerrechnung (BT-25/BT-26), eine oder mehrere
+    - number:
+        column: "Ursprungsrechnung"
+      date:
+        column: "Ursprungsdatum"
+```
+
+Liefert die CSV keine Belegart, kann die Regel auch auf das Vorzeichen einer Betragsspalte prüfen, zum Beispiel `regex: "^-"` auf `INVOICE_TOTAL`.
+
+`precedingInvoices` erzeugt je Eintrag ein `ram:InvoiceReferencedDocument` mit Nummer und Datum der Ursprungsrechnung. Einträge ohne Nummer werden übersprungen; das Datum ist optional. Mehrere Einträge sind für Sammelgutschriften oder Schlussrechnungen nach mehreren Abschlägen gedacht. Das Element wird ab Profil `BasicWL` geschrieben, nicht in `Minimum`.
+
+Vorzeichen der Beträge:
+
+| Typ | Beträge | Hinweis |
+|-----|---------|---------|
+| `381` | positiv | Das Minus steckt im Code. Negative Beträge bei `381` werden von Validatoren und Empfängern abgelehnt. |
+| `380` mit negativen Beträgen | negativ | „Negativrechnung“, laut Factur-X zulässig; manche Empfänger buchen sie als normale Rechnung. |
+| `384` | positiv oder negativ je Position | Teilkorrektur, Mengen dürfen negativ sein. |
+
+Das Tool schreibt die Beträge so, wie die CSV sie liefert. Empfohlen ist `381` mit positiven Beträgen und `precedingInvoices`.
+
+Weitere Hinweise:
+
+- `name` sollte bei Storno und Korrektur auf `STORNORECHNUNG` bzw. `RECHNUNGSKORREKTUR` statt `GUTSCHRIFT` stehen. Das Element wird nur im Profil `Extended` geschrieben.
+- Ein Storno bekommt eine eigene Rechnungsnummer; das Original wird nie überschrieben (GoBD).
+- Der sichtbare PDF-Teil muss zum XML-Typ passen (kein PDF „Gutschrift“ zu einem XML mit `380`).
+- Chorus Pro (Frankreich) akzeptiert nur `380`.
+
+Unvollständige Angaben erzeugen eine Warnung im Log, keinen Abbruch:
+
+- `381` oder `384` ohne `precedingInvoices` (bei `XRechnung` und `384`: BR-DE-26)
+- Profil `XRechnung` mit einem Code außerhalb von `326`, `380`, `381`, `384`, `389`, `875`, `876`, `877` (BR-DE-17)
+- Profil `Minimum` mit `precedingInvoices`
+
+Eine lauffähige Beispielkonfiguration ist `testdata/config_creditnote.yml` mit `testdata/test_creditnote.csv`.
 
 ## Käuferdaten
 
@@ -364,7 +431,7 @@ totals:
     value: "0"
 ```
 
-Im manuellen Modus werden nur die Rechnungssummen aus der CSV übernommen. Die Steueraufschlüsselung je Steuersatz (BG-23) wird weiterhin aus den Positionen abgeleitet: Die Steuerbasis je Satz ist die Summe der Positionsnettobeträge, der Steuerbetrag je Satz wird daraus berechnet. Eine Differenz zwischen der berechneten Steuersumme und `taxTotalAmount` wird der letzten Steuergruppe zugeschlagen, damit die Summe der Gruppen exakt `taxTotalAmount` ergibt (BR-CO-14). Bei nur einem Steuersatz entspricht der Steuerbetrag der Gruppe damit genau dem CSV-Wert. Rundungsabweichungen im Cent-Bereich zwischen Steuerbasis × Steuersatz und dem übernommenen Steuerbetrag sind zulässig (BR-CO-17 sieht eine Toleranz vor). Zeilennettobeträge (BT-131) werden auch im manuellen Modus aus Einzelpreis × Menge berechnet; `lineTotalAmount` muss deren Summe entsprechen (BR-CO-10).
+Im manuellen Modus werden nur die Rechnungssummen aus der CSV übernommen. Die Steueraufschlüsselung je Steuersatz (BG-23) wird weiterhin aus den Positionen abgeleitet: Die Steuerbasis je Satz ist die Summe der Positionsnettobeträge, der Steuerbetrag je Satz wird daraus berechnet. Eine Differenz zwischen der berechneten Steuersumme und `taxTotalAmount` wird der letzten Steuergruppe zugeschlagen, damit die Summe der Gruppen exakt `taxTotalAmount` ergibt (BR-CO-14). Bei nur einem Steuersatz entspricht der Steuerbetrag der Gruppe damit genau dem CSV-Wert. Rundungsabweichungen im Cent-Bereich zwischen Steuerbasis × Steuersatz und dem übernommenen Steuerbetrag sind zulässig (BR-CO-17 sieht eine Toleranz vor). Zeilennettobeträge (BT-131) werden in beiden Modi aus Einzelpreis × Menge berechnet und kaufmännisch auf zwei Nachkommastellen gerundet; alle Kopfsummen und Steuerbasen summieren diese gerundeten Werte (BR-CO-10, BR-S-08). Im manuellen Modus muss `lineTotalAmount` der Summe der gerundeten Zeilennettobeträge entsprechen.
 
 Für Rabatt-Szenarien mit Positionsdaten ist `auto` bevorzugt, weil `BT-131`, Steuerbasis und Gesamtsummen dann konsistent aus den Positionen berechnet werden.
 
