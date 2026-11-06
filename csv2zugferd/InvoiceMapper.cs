@@ -180,6 +180,7 @@ public static class InvoiceMapper
             var discountPercent = GetDiscountPercent(fields.DiscountPercent, row, csvConfig);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
+            var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
 
             var item = desc.AddTradeLineItem(
                 name: name,
@@ -189,7 +190,7 @@ public static class InvoiceMapper
                 unitQuantity: 1m,
                 grossUnitPrice: grossUnitPrice,
                 billedQuantity: quantity,
-                lineTotalAmount: null,
+                lineTotalAmount: lineTotal,
                 taxType: taxType,
                 categoryCode: categoryCode,
                 taxPercent: taxPercent,
@@ -207,7 +208,7 @@ public static class InvoiceMapper
                 unitCode,
                 taxType,
                 categoryCode);
-            MapAllowanceCharge(item, lineItems.AllowanceCharge, row, csvConfig, discountedNetPrice, quantity);
+            MapAllowanceCharge(item, lineItems.AllowanceCharge, row, csvConfig, lineTotal);
         }
     }
 
@@ -303,6 +304,7 @@ public static class InvoiceMapper
             var discountPercent = ParseDecimal(ResolveColumnValue(fields?.DiscountPercent, discountFragment), csvConfig.DecimalSeparator);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
+            var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
 
             var unitCodeValue = ResolveColumnValue(fixedUnitCode);
             var taxTypeValue = ResolveColumnValue(fixedTaxType);
@@ -319,7 +321,7 @@ public static class InvoiceMapper
                 unitQuantity: 1m,
                 grossUnitPrice: grossUnitPrice,
                 billedQuantity: quantity,
-                lineTotalAmount: null,
+                lineTotalAmount: lineTotal,
                 taxType: taxType,
                 categoryCode: categoryCode,
                 taxPercent: taxPercent,
@@ -341,7 +343,7 @@ public static class InvoiceMapper
         }
     }
 
-    private static void MapAllowanceCharge(TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, CsvConfig csvConfig, decimal netPrice, decimal quantity)
+    private static void MapAllowanceCharge(TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, CsvConfig csvConfig, decimal basisAmount)
     {
         if (charge == null || !charge.Enabled) return;
 
@@ -354,8 +356,7 @@ public static class InvoiceMapper
         var reason = Resolve(charge.Reason, row) ?? "Rabatt";
         var isDiscount = Resolve(charge.IsDiscount, row)?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
 
-        var basisAmount = netPrice * quantity;
-        var actualAmount = basisAmount * (percent / 100m);
+        var actualAmount = RoundAmount(basisAmount * (percent / 100m));
 
         if (isDiscount)
         {
@@ -401,7 +402,7 @@ public static class InvoiceMapper
 
         foreach (var item in desc.TradeLineItems)
         {
-            var lineTotal = item.NetUnitPrice * item.BilledQuantity;
+            var lineTotal = GetLineTotal(item);
             lineTotalAmount += lineTotal;
 
             decimal lineAllowance = 0m;
@@ -425,7 +426,7 @@ public static class InvoiceMapper
 
         foreach (var (percent, basisAmount) in taxGroups)
         {
-            var taxAmount = Math.Round(basisAmount * percent / 100m, 2);
+            var taxAmount = RoundAmount(basisAmount * percent / 100m);
             taxTotalAmount += taxAmount;
             desc.AddApplicableTradeTax(basisAmount, percent, taxAmount, TaxTypes.VAT, TaxCategoryCodes.S);
         }
@@ -449,7 +450,7 @@ public static class InvoiceMapper
             var lineAllowance = item.GetTradeAllowanceCharges()
                 .Where(charge => charge.ChargeIndicator == false)
                 .Sum(charge => charge.ActualAmount);
-            var taxableAmount = item.NetUnitPrice * item.BilledQuantity - lineAllowance;
+            var taxableAmount = GetLineTotal(item) - lineAllowance;
             var key = (item.TaxPercent, item.TaxType ?? TaxTypes.VAT, item.TaxCategoryCode ?? TaxCategoryCodes.S);
 
             if (!taxGroups.TryAdd(key, taxableAmount))
@@ -463,7 +464,7 @@ public static class InvoiceMapper
                 group.Key.Type,
                 group.Key.Category,
                 BasisAmount = group.Value,
-                TaxAmount = Math.Round(group.Value * group.Key.Percent / 100m, 2),
+                TaxAmount = RoundAmount(group.Value * group.Key.Percent / 100m),
             })
             .ToList();
 
@@ -650,6 +651,17 @@ public static class InvoiceMapper
 
     private static decimal ApplyDiscount(decimal netPrice, decimal discountPercent) =>
         discountPercent > 0 ? Math.Round(netPrice * (1m - discountPercent / 100m), 4) : netPrice;
+
+    // Kaufmännische Rundung auf zwei Stellen, wie sie die Bibliothek beim Schreiben der Beträge anwendet.
+    private static decimal RoundAmount(decimal value) =>
+        Math.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    // Zeilennettobetrag (BT-131): einmal berechnen, gerundet an die Bibliothek übergeben und für alle Summen wiederverwenden.
+    private static decimal CalculateLineTotal(decimal netUnitPrice, decimal quantity) =>
+        RoundAmount(netUnitPrice * quantity);
+
+    private static decimal GetLineTotal(TradeLineItem item) =>
+        item.LineTotalAmount ?? CalculateLineTotal(item.NetUnitPrice, item.BilledQuantity);
 
     private static DateTime ParseDate(string value, string format)
     {

@@ -613,6 +613,82 @@ public class InvoiceMapperTests
         desc.DuePayableAmount!.Value.ShouldBe(119.00m);
     }
 
+    [Test]
+    public void Map_AutoTotals_RoundsLineTotalsBeforeSumming()
+    {
+        var (config, rows) = TestHelper.CreateRoundingTestCase();
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.TradeLineItems.Select(item => item.LineTotalAmount)
+            .ShouldBe([88.47m, 14.41m, 88.47m, 19.55m, 67.06m, 67.06m, 2.00m, 47.81m]);
+        desc.LineTotalAmount!.Value.ShouldBe(394.83m);
+        desc.TaxBasisAmount!.Value.ShouldBe(394.83m);
+        var taxes = desc.GetApplicableTradeTaxes();
+        taxes.Single(tax => tax.Percent == 19m).BasisAmount.ShouldBe(217.89m);
+        taxes.Single(tax => tax.Percent == 19m).TaxAmount.ShouldBe(41.40m);
+        taxes.Single(tax => tax.Percent == 7m).BasisAmount.ShouldBe(176.94m);
+        taxes.Single(tax => tax.Percent == 7m).TaxAmount.ShouldBe(12.39m);
+        desc.TaxTotalAmount!.Value.ShouldBe(53.79m);
+        desc.GrandTotalAmount!.Value.ShouldBe(448.62m);
+    }
+
+    [Test]
+    public void Map_ManualTotals_TaxBasisUsesRoundedLineTotals()
+    {
+        var (config, rows) = TestHelper.CreateRoundingTestCase("manual");
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.LineTotalAmount!.Value.ShouldBe(394.83m);
+        var taxes = desc.GetApplicableTradeTaxes();
+        taxes.Single(tax => tax.Percent == 19m).BasisAmount.ShouldBe(217.89m);
+        taxes.Single(tax => tax.Percent == 7m).BasisAmount.ShouldBe(176.94m);
+        taxes.Sum(tax => tax.TaxAmount).ShouldBe(53.79m);
+    }
+
+    [Test]
+    public void Map_AutoTotals_NegativeQuantities_RoundsConsistently()
+    {
+        var config = new AppConfig
+        {
+            Csv = new CsvConfig { DecimalSeparator = "." },
+            Mapping = new MappingConfig
+            {
+                Invoice = new InvoiceMapping
+                {
+                    InvoiceNumber = new FieldMapping { Value = "K-2026-001" },
+                    InvoiceDate = new FieldMapping { Value = "2026-01-15" },
+                    Currency = new FieldMapping { Value = "EUR" },
+                },
+                LineItems = new LineItemsMapping
+                {
+                    Mode = "rows",
+                    Fields = new LineItemFieldsMapping
+                    {
+                        Name = new FieldMapping { Column = "Name" },
+                        NetUnitPrice = new FieldMapping { Column = "Price" },
+                        BilledQuantity = new FieldMapping { Column = "Quantity" },
+                        TaxPercent = new FieldMapping { Value = "19" },
+                    },
+                },
+            }
+        };
+        var rows = new List<Dictionary<string, string>>
+        {
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "RÃ¼cknahme A", ["Price"] = "51.45", ["Quantity"] = "-0.28" },
+            new(StringComparer.OrdinalIgnoreCase) { ["Name"] = "RÃ¼cknahme B", ["Price"] = "1.115", ["Quantity"] = "-3" },
+        };
+
+        var desc = InvoiceMapper.Map(rows, config);
+
+        desc.TradeLineItems.Select(item => item.LineTotalAmount).ShouldBe([-14.41m, -3.35m]);
+        desc.LineTotalAmount!.Value.ShouldBe(-17.76m);
+        desc.GetApplicableTradeTaxes().Single().BasisAmount.ShouldBe(-17.76m);
+        desc.GetApplicableTradeTaxes().Single().TaxAmount.ShouldBe(-3.37m);
+        desc.GrandTotalAmount!.Value.ShouldBe(-21.13m);
+    }
+
     // ── 4.3.6 Zahlungsbedingungen ─────────────────────────────────────────
 
     [Test]

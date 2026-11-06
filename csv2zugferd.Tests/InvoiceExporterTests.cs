@@ -121,6 +121,36 @@ public class InvoiceExporterTests
     }
 
     [Test]
+    public void Export_LineTotalsSumEqualsHeaderLineTotalAmount()
+    {
+        var (config, rows) = TestHelper.CreateRoundingTestCase();
+        var desc = InvoiceMapper.Map(rows, config);
+        var path = Path.Combine(_tempDir, "rounding.xml");
+
+        InvoiceExporter.SaveXml(desc, path, config.Zugferd);
+
+        var xml = XDocument.Load(path);
+        var lineTotals = xml.Descendants(Ram + "IncludedSupplyChainTradeLineItem")
+            .Select(item => ParseAmount(item.Descendants(Ram + "LineTotalAmount").Single().Value))
+            .ToList();
+        var headerLineTotal = ParseAmount(
+            xml.Descendants(Ram + "SpecifiedTradeSettlementHeaderMonetarySummation").Elements(Ram + "LineTotalAmount").Single().Value);
+        var taxBasisAmounts = xml.Descendants(Ram + "ApplicableHeaderTradeSettlement").Elements(Ram + "ApplicableTradeTax")
+            .Select(tax => tax.Element(Ram + "BasisAmount")!.Value)
+            .ToList();
+
+        lineTotals.Count.ShouldBe(8);
+        lineTotals.Sum().ShouldBe(headerLineTotal);
+        headerLineTotal.ShouldBe(394.83m);
+        taxBasisAmounts.ShouldBe(["176.94", "217.89"], ignoreOrder: true);
+    }
+
+    private static readonly XNamespace Ram = "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100";
+
+    private static decimal ParseAmount(string value) =>
+        decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+
+    [Test]
     [Ignore("Requires PDF template file")]
     public void SavePdfAsync_CreatesFile()
     {
