@@ -10,10 +10,30 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+  <!-- Release-Publish (GitLab-Pipeline, lokal "dotnet publish -c Release"): Single-File win-x64.
+       Nur beim Publish, damit "dotnet pack" ein plattformneutrales .NET-Tool-Paket erzeugt. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release' AND '$(_IsPublishing)' == 'true'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
+  <!-- NuGet-Paket: .NET-Tool und MCP-Server (framework-abhaengig, Start per "dnx csv2zugferd mcp") -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>csv2zugferd</ToolCommandName>
+    <PackageId>csv2zugferd</PackageId>
+    <PackageType>McpServer</PackageType>
+    <Authors>Rillsoft GmbH</Authors>
+    <Company>Rillsoft GmbH</Company>
+    <Description>CSV to ZUGFeRD/Factur-X (EN 16931) converter with PDF/A-3 embedding. Local .NET CLI with an MCP server (stdio) that helps AI assistants draft and check the YAML mapping.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://zugferd-tools.de/docs/mcp-server/</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/rillsoft/csv2zugferd</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>mcp;mcp-server;zugferd;factur-x;e-rechnung;e-invoice;en16931;csv;cli</PackageTags>
+    <IncludeSymbols>false</IncludeSymbols>
   </PropertyGroup>
 
   <ItemGroup>
@@ -28,10 +48,19 @@
     <PackageReference Include="ZUGFeRD.PDF-csharp" />
   </ItemGroup>
 
+  <!-- Testdaten nur ins Build-Ausgabeverzeichnis, nicht in Publish und Paket -->
   <ItemGroup>
     <Content Include="..\testdata\**\*" LinkBase="testdata">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+      <Pack>false</Pack>
     </Content>
+  </ItemGroup>
+
+  <!-- Paketinhalt: README (nuget.org, Registry-Marker mcp-name) und Registry-Manifest -->
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\.mcp\server.json" Pack="true" PackagePath=".mcp\" />
   </ItemGroup>
 
   <!-- MCP-Ressourcen: README und Beispielkonfigurationen eingebettet (Mcp/DocResources.cs) -->

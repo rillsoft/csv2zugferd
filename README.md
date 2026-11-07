@@ -1,5 +1,7 @@
 ﻿# csv2zugferd Dokumentation
 
+<!-- mcp-name: de.zugferd-tools/csv2zugferd -->
+
 **Website:** [zugferd-tools.de](https://zugferd-tools.de)
 
 `csv2zugferd` ist ein .NET-CLI-Tool, das Rechnungsdaten aus CSV-Dateien liest und daraus ZUGFeRD-konforme XML-Dateien oder PDF-Dateien mit eingebettetem ZUGFeRD-XML erzeugt. Die Struktur der CSV-Datei und das Mapping auf ZUGFeRD-Felder werden über eine YAML-Konfiguration gesteuert.
@@ -69,6 +71,8 @@ Vorbereitung: Für die Einrichtung mit einem KI-Assistenten anonymisierte Beispi
 
 Der Server wird vom MCP-Client gestartet und liest JSON-RPC von stdin; stdout trägt ausschließlich JSON-RPC, Logs gehen nach `logs/zugferd-*.log` im Arbeitsverzeichnis und Warnungen zusätzlich nach stderr. `--verbose` schaltet die Logdatei auf Debug.
 
+Zwei Wege zum Start: die Windows-Exe aus dem [GitHub-Release](https://github.com/rillsoft/csv2zugferd/releases) (`csv2zugferd.exe mcp`, kein .NET nötig) oder das .NET-Tool-Paket `csv2zugferd` von NuGet, das MCP-Clients mit `dnx csv2zugferd@1.3.0 mcp` starten (benötigt das .NET-10-SDK; läuft unter Windows, Linux und macOS). Mit dem Release 1.3.0 erscheint der Server in der [Official MCP Registry](https://registry.modelcontextprotocol.io/) unter dem Namen `de.zugferd-tools/csv2zugferd`.
+
 Claude Desktop (`claude_desktop_config.json`):
 
 ```json
@@ -82,10 +86,25 @@ Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
+Claude Desktop mit dem NuGet-Paket statt der Exe:
+
+```json
+{
+  "mcpServers": {
+    "csv2zugferd": {
+      "command": "dnx",
+      "args": ["csv2zugferd@1.3.0", "mcp"]
+    }
+  }
+}
+```
+
 Claude Code:
 
 ```powershell
 claude mcp add csv2zugferd -- C:\Tools\csv2zugferd.exe mcp
+# oder mit dem NuGet-Paket:
+claude mcp add csv2zugferd -- dnx csv2zugferd@1.3.0 mcp
 ```
 
 VS Code (`.vscode/mcp.json`):
