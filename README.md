@@ -577,6 +577,20 @@ Die passende Konfiguration liegt unter `test\config_datasrc.yml`.
 6. `InvoiceDescriptor` als ZUGFeRD-XML speichern.
 7. Optional das XML in eine PDF-Vorlage einbetten.
 
+## Externe Validierung mit Mustang-CLI
+
+Die Unit-Tests prüfen Mapping und Summen. Ob das erzeugte XML den ZUGFeRD-Regeln entspricht (Schema, EN16931- und XRechnung-Schematron), prüft zusätzlich das [Mustang-CLI](https://www.mustangproject.org/commandline/). Diese Tests laufen nicht bei `dotnet test`, sondern nur auf ausdrückliche Anforderung, weil sie Java 17 und das Mustang-Jar benötigen.
+
+```powershell
+# einmalig: Jar nach tools/Mustang-CLI.jar laden (nicht im Git)
+.\tools\Get-MustangCli.ps1
+
+# alle Testdaten-Konfigurationen exportieren und validieren
+dotnet test --filter Category=ExternalValidation
+```
+
+Alternativ kann der Jar-Pfad über die Umgebungsvariable `MUSTANG_CLI_JAR` gesetzt werden. Fehlt das Jar, melden die Tests `Inconclusive` statt eines Fehlers. Für eine manuelle Gegenprobe einzelner Dateien eignet sich der Browser-Upload auf [e-rechnungs-checker.de](https://e-rechnungs-checker.de/).
+
 ## Hinweise
 
 - Paketversionen werden zentral in `Directory.Packages.props` verwaltet.
