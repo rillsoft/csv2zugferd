@@ -14,8 +14,17 @@ public static class ResponseLimit
 {
     public const int DefaultLimitBytes = 900_000;
 
-    /// <summary>Grenze in Byte; für Tests veränderbar.</summary>
-    public static int LimitBytes { get; set; } = DefaultLimitBytes;
+    /// <summary>Umgebungsvariable, mit der Protokolltests die Grenze des gestarteten Prozesses setzen.</summary>
+    public const string LimitEnvironmentVariable = "CSV2ZUGFERD_MCP_MAX_RESPONSE_BYTES";
+
+    /// <summary>Grenze in Byte; für Tests veränderbar, Startwert aus <see cref="LimitEnvironmentVariable"/> oder Standard.</summary>
+    public static int LimitBytes { get; set; } = ReadLimitFromEnvironment();
+
+    private static int ReadLimitFromEnvironment()
+    {
+        var raw = Environment.GetEnvironmentVariable(LimitEnvironmentVariable);
+        return int.TryParse(raw, out var limit) && limit > 0 ? limit : DefaultLimitBytes;
+    }
 
     public static int MeasureResponseBytes(RequestId id, CallToolResult result)
     {

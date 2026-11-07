@@ -39,6 +39,11 @@ public sealed class McpStdioClient : IDisposable
     }
 
     public McpStdioClient(params string[] extraArguments)
+        : this(null, extraArguments)
+    {
+    }
+
+    public McpStdioClient(IReadOnlyDictionary<string, string>? environment, params string[] extraArguments)
     {
         var testDirectory = TestContext.CurrentContext.TestDirectory;
         var exe = Path.Combine(testDirectory, OperatingSystem.IsWindows() ? "csv2zugferd.exe" : "csv2zugferd");
@@ -65,6 +70,11 @@ public sealed class McpStdioClient : IDisposable
         startInfo.ArgumentList.Add("mcp");
         foreach (var argument in extraArguments)
             startInfo.ArgumentList.Add(argument);
+        if (environment != null)
+        {
+            foreach (var (key, value) in environment)
+                startInfo.Environment[key] = value;
+        }
 
         _process = Process.Start(startInfo) ?? throw new InvalidOperationException("Prozess konnte nicht gestartet werden");
         _process.ErrorDataReceived += (_, e) =>

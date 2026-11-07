@@ -15,11 +15,19 @@ public static class ErrorDataFilter
     public static McpMessageHandler Apply(McpMessageHandler next) =>
         async (context, cancellationToken) =>
         {
-            if (context.JsonRpcMessage is JsonRpcError { Error: { Data: null } detail } && TryExtractCode(detail.Message, out var code))
-                detail.Data = JsonSerializer.SerializeToElement(new JsonObject { ["code"] = code });
-
+            Enrich(context.JsonRpcMessage);
             await next(context, cancellationToken);
         };
+
+    /// <summary>Ergänzt <c>error.data.code</c>, wenn die Meldung mit einem bekannten Code beginnt; liefert true, wenn etwas gesetzt wurde.</summary>
+    public static bool Enrich(JsonRpcMessage message)
+    {
+        if (message is not JsonRpcError { Error: { Data: null } detail } || !TryExtractCode(detail.Message, out var code))
+            return false;
+
+        detail.Data = JsonSerializer.SerializeToElement(new JsonObject { ["code"] = code });
+        return true;
+    }
 
     private static bool TryExtractCode(string? message, out string code)
     {
