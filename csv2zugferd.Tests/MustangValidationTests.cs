@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Xml.Linq;
 using NUnit.Framework;
 using Shouldly;
