@@ -158,19 +158,29 @@ public static class InvoiceMapper
 
     private static void MapDelivery(InvoiceDescriptor desc, DeliveryMapping? delivery, Dictionary<string, string> row, string dateFormat)
     {
-        if (delivery == null) return;
-
-        var noteNo = Resolve(delivery.DeliveryNoteNumber, row);
-        var noteDateStr = Resolve(delivery.DeliveryNoteDate, row);
-        if (!string.IsNullOrEmpty(noteNo))
+        if (delivery != null)
         {
-            var noteDate = !string.IsNullOrEmpty(noteDateStr) ? ParseDate(noteDateStr, dateFormat) : (DateTime?)null;
-            desc.SetDeliveryNoteReferenceDocument(noteNo, noteDate);
+            var noteNo = Resolve(delivery.DeliveryNoteNumber, row);
+            var noteDateStr = Resolve(delivery.DeliveryNoteDate, row);
+            if (!string.IsNullOrEmpty(noteNo))
+            {
+                var noteDate = !string.IsNullOrEmpty(noteDateStr) ? ParseDate(noteDateStr, dateFormat) : (DateTime?)null;
+                desc.SetDeliveryNoteReferenceDocument(noteNo, noteDate);
+            }
+
+            var actualDateStr = Resolve(delivery.ActualDeliveryDate, row);
+            if (!string.IsNullOrEmpty(actualDateStr))
+                desc.ActualDeliveryDate = ParseDate(actualDateStr, dateFormat);
         }
 
-        var actualDateStr = Resolve(delivery.ActualDeliveryDate, row);
-        if (!string.IsNullOrEmpty(actualDateStr))
-            desc.ActualDeliveryDate = ParseDate(actualDateStr, dateFormat);
+        // ApplicableHeaderTradeDelivery ist im CII-Schema Pflicht (1..1). Die Bibliothek lässt leere Elemente weg,
+        // deshalb braucht der Block mindestens einen Inhalt. Ohne Lieferdaten gilt: Leistungsdatum = Rechnungsdatum (BT-72).
+        if (desc.ActualDeliveryDate == null && desc.DeliveryNoteReferencedDocument == null && desc.InvoiceDate != null)
+        {
+            desc.ActualDeliveryDate = desc.InvoiceDate;
+            Log.Warning("Keine Lieferdaten konfiguriert: Rechnungsdatum {InvoiceDate:yyyy-MM-dd} wird als Leistungsdatum (BT-72) verwendet",
+                desc.InvoiceDate);
+        }
     }
 
     private static void MapOrderReference(InvoiceDescriptor desc, OrderReferenceMapping? orderRef, Dictionary<string, string> row, string dateFormat)
@@ -386,15 +396,20 @@ public static class InvoiceMapper
 
         var actualAmount = RoundAmount(basisAmount * (percent / 100m));
 
+        // Positionsrabatt/-zuschlag auf Abrechnungsebene (BG-27/BG-28):
+        // SpecifiedLineTradeSettlement/SpecifiedTradeAllowanceCharge. Der Zeilennettobetrag (BT-131)
+        // muss den Betrag bereits enthalten, sonst scheitern BR-CO-10/BR-CO-13 und die Steuerbasis stimmt nicht.
         if (isDiscount)
         {
-            item.AddTradeAllowance(CurrencyCodes.EUR, basisAmount, actualAmount, percent, reason);
-            Log.Debug("  Rabatt: {Percent}% = {Amount} (Grund: {Reason})", percent, actualAmount, reason);
+            item.AddSpecifiedTradeAllowance(CurrencyCodes.EUR, basisAmount, actualAmount, percent, reason);
+            item.LineTotalAmount = RoundAmount(basisAmount - actualAmount);
+            Log.Debug("  Rabatt: {Percent}% = {Amount} (Grund: {Reason}), Zeilennetto={LineTotal}", percent, actualAmount, reason, item.LineTotalAmount);
         }
         else
         {
-            item.AddTradeCharge(CurrencyCodes.EUR, basisAmount, actualAmount, percent, reason);
-            Log.Debug("  Zuschlag: {Percent}% = {Amount} (Grund: {Reason})", percent, actualAmount, reason);
+            item.AddSpecifiedTradeCharge(CurrencyCodes.EUR, basisAmount, actualAmount, percent, reason);
+            item.LineTotalAmount = RoundAmount(basisAmount + actualAmount);
+            Log.Debug("  Zuschlag: {Percent}% = {Amount} (Grund: {Reason}), Zeilennetto={LineTotal}", percent, actualAmount, reason, item.LineTotalAmount);
         }
     }
 
@@ -423,7 +438,9 @@ public static class InvoiceMapper
     private static void CalculateAutoTotals(InvoiceDescriptor desc, CsvConfig csvConfig)
     {
         decimal lineTotalAmount = 0m;
-        decimal allowanceTotalAmount = 0m;
+        // Positionsrabatte stecken bereits im Zeilennettobetrag (BT-131). AllowanceTotalAmount (BT-107)
+        // ist nur für Rabatte auf Dokumentebene gedacht, die das Tool nicht erzeugt.
+        const decimal allowanceTotalAmount = 0m;
 
         // Group tax amounts by percent
         var taxGroups = new Dictionary<decimal, decimal>();
@@ -433,20 +450,11 @@ public static class InvoiceMapper
             var lineTotal = GetLineTotal(item);
             lineTotalAmount += lineTotal;
 
-            decimal lineAllowance = 0m;
-            foreach (var charge in item.GetTradeAllowanceCharges())
-            {
-                if (charge.ChargeIndicator == false) // discount
-                    lineAllowance += charge.ActualAmount;
-            }
-            allowanceTotalAmount += lineAllowance;
-
             var taxPercent = item.TaxPercent;
-            var taxableAmount = lineTotal - lineAllowance;
 
             if (!taxGroups.ContainsKey(taxPercent))
                 taxGroups[taxPercent] = 0m;
-            taxGroups[taxPercent] += taxableAmount;
+            taxGroups[taxPercent] += lineTotal;
         }
 
         var taxBasisAmount = lineTotalAmount - allowanceTotalAmount;
@@ -475,10 +483,7 @@ public static class InvoiceMapper
 
         foreach (var item in desc.TradeLineItems)
         {
-            var lineAllowance = item.GetTradeAllowanceCharges()
-                .Where(charge => charge.ChargeIndicator == false)
-                .Sum(charge => charge.ActualAmount);
-            var taxableAmount = GetLineTotal(item) - lineAllowance;
+            var taxableAmount = GetLineTotal(item);
             var key = (item.TaxPercent, item.TaxType ?? TaxTypes.VAT, item.TaxCategoryCode ?? TaxCategoryCodes.S);
 
             if (!taxGroups.TryAdd(key, taxableAmount))

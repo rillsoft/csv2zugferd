@@ -358,3 +358,6 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
+
+# Mustang-CLI jar for external validation tests (tools/Get-MustangCli.ps1)
+tools/*.jar

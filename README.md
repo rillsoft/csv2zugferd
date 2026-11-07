@@ -303,7 +303,9 @@ delivery:
     column: "DELIVERY_DATE"
 ```
 
-Alle drei Felder sind optional. `deliveryNoteNumber` und `deliveryNoteDate` werden gemeinsam als Lieferscheinreferenz geschrieben. `actualDeliveryDate` setzt das tatsächliche Lieferdatum.
+Alle drei Felder sind optional. `deliveryNoteNumber` und `deliveryNoteDate` werden gemeinsam als Lieferscheinreferenz geschrieben. `actualDeliveryDate` setzt das tatsächliche Lieferdatum (BT-72).
+
+Sind weder Lieferschein noch Lieferdatum konfiguriert, wird das Rechnungsdatum als Leistungsdatum geschrieben und eine Warnung protokolliert. Der Block `ApplicableHeaderTradeDelivery` ist im ZUGFeRD-Schema Pflicht; ohne Inhalt würde die XML-Datei die Validierung nicht bestehen.
 
 ## Bestellreferenz
 
@@ -355,7 +357,7 @@ lineItems:
       column: "Rabatt_Grund"
 ```
 
-`allowanceCharge` ist optional. `isDiscount: true` erzeugt einen `TradeAllowance` (Rabatt), `false` einen `TradeCharge` (Zuschlag). `chargePercentage` akzeptiert Werte wie `10`, `10.00` oder `10%`. Im `columns`-Modus wird Rabatt stattdessen über `discountPercent` in `fields` konfiguriert.
+`allowanceCharge` ist optional. `isDiscount: true` erzeugt einen Positionsrabatt (BG-27), `false` einen Positionszuschlag (BG-28), jeweils als `SpecifiedTradeAllowanceCharge` in der Positionsabrechnung mit Basisbetrag, Prozentsatz und Grund. Der Zeilennettobetrag (BT-131) ist bereits um den Rabatt gemindert bzw. um den Zuschlag erhöht; die Summen auf Dokumentebene folgen daraus. `chargePercentage` akzeptiert Werte wie `10`, `10.00` oder `10%`. Im `columns`-Modus wird Rabatt stattdessen über `discountPercent` in `fields` konfiguriert.
 
 ### Modus `columns`
 
@@ -576,6 +578,20 @@ Die passende Konfiguration liegt unter `test\config_datasrc.yml`.
 5. Summen automatisch berechnen oder aus CSV übernehmen.
 6. `InvoiceDescriptor` als ZUGFeRD-XML speichern.
 7. Optional das XML in eine PDF-Vorlage einbetten.
+
+## Externe Validierung mit Mustang-CLI
+
+Die Unit-Tests prüfen Mapping und Summen. Ob das erzeugte XML den ZUGFeRD-Regeln entspricht (Schema, EN16931- und XRechnung-Schematron), prüft zusätzlich das [Mustang-CLI](https://www.mustangproject.org/commandline/). Diese Tests laufen nicht bei `dotnet test`, sondern nur auf ausdrückliche Anforderung, weil sie Java 17 und das Mustang-Jar benötigen.
+
+```powershell
+# einmalig: Jar nach tools/Mustang-CLI.jar laden (nicht im Git)
+.\tools\Get-MustangCli.ps1
+
+# alle Testdaten-Konfigurationen exportieren und validieren
+dotnet test --filter Category=ExternalValidation
+```
+
+Alternativ kann der Jar-Pfad über die Umgebungsvariable `MUSTANG_CLI_JAR` gesetzt werden. Fehlt das Jar, melden die Tests `Inconclusive` statt eines Fehlers. Für eine manuelle Gegenprobe einzelner Dateien eignet sich der Browser-Upload auf [e-rechnungs-checker.de](https://e-rechnungs-checker.de/).
 
 ## Hinweise
 
