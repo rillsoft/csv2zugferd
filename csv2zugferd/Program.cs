@@ -1,5 +1,6 @@
 ﻿using System.CommandLine;
 using Csv2Zugferd;
+using Csv2Zugferd.Mcp;
 using Csv2Zugferd.Models;
 using Serilog;
 using Serilog.Events;
@@ -44,6 +45,18 @@ rootCommand.Options.Add(configOption);
 rootCommand.Options.Add(outputOption);
 rootCommand.Options.Add(xmlOnlyOption);
 rootCommand.Options.Add(verboseOption);
+
+// Unterbefehl "mcp": MCP-Server über stdio als Einrichtungsassistent für die YAML-Konfiguration.
+var mcpVerboseOption = new Option<bool>("--verbose", "-v")
+{
+    Description = "Debug-Level in der Logdatei (logs/zugferd-*.log)",
+};
+
+var mcpCommand = new Command("mcp", "Startet den MCP-Server (stdio) als Einrichtungsassistent für die YAML-Konfiguration");
+mcpCommand.Options.Add(mcpVerboseOption);
+mcpCommand.SetAction((parseResult, cancellationToken) =>
+    McpServerCommand.RunAsync(parseResult.GetValue(mcpVerboseOption), cancellationToken));
+rootCommand.Subcommands.Add(mcpCommand);
 
 rootCommand.SetAction(async (parseResult, cancellationToken) =>
 {
@@ -132,4 +145,3 @@ rootCommand.SetAction(async (parseResult, cancellationToken) =>
 });
 
 return rootCommand.Parse(args).Invoke();
-

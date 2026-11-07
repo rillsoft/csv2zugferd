@@ -91,6 +91,50 @@ public class CsvInvoiceReaderTests
     }
 
     [Test]
+    public void Read_MissingFile_ThrowsCsvFileNotFound()
+    {
+        var exception = Should.Throw<Csv2ZugferdException>(() => CsvInvoiceReader.Read("gibt_es_nicht.csv", _defaultConfig));
+
+        exception.Code.ShouldBe(ErrorCodes.CsvFileNotFound);
+    }
+
+    [Test]
+    public void ReadTable_HeaderOnlyFile_ReturnsHeadersAndNoRows()
+    {
+        var table = CsvInvoiceReader.ReadTable(TestHelper.GetTestDataPath("test_empty.csv"), _defaultConfig);
+
+        table.Headers.ShouldBe(["Rechnungsnummer", "Rechnungsdatum"]);
+        table.Rows.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void ReadTable_ZeroByteFile_ThrowsCsvEmpty()
+    {
+        var path = Path.Combine(TestContext.CurrentContext.WorkDirectory, "leer.csv");
+        File.WriteAllText(path, string.Empty);
+        try
+        {
+            var exception = Should.Throw<Csv2ZugferdException>(() => CsvInvoiceReader.ReadTable(path, _defaultConfig));
+
+            exception.Code.ShouldBe(ErrorCodes.CsvEmpty);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Test]
+    public void ReadTable_UnknownEncoding_ThrowsCsvReadFailed()
+    {
+        var config = new CsvConfig { Encoding = "gibt-es-nicht" };
+
+        var exception = Should.Throw<Csv2ZugferdException>(() => CsvInvoiceReader.ReadTable(TestHelper.GetTestDataPath("test_rows.csv"), config));
+
+        exception.Code.ShouldBe(ErrorCodes.CsvReadFailed);
+    }
+
+    [Test]
     public void Read_TabSeparator_ParsesCorrectly()
     {
         var tabConfig = new CsvConfig
