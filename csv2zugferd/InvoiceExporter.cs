@@ -8,24 +8,43 @@ namespace Csv2Zugferd;
 public static class InvoiceExporter
 {
     public static void SaveXml(InvoiceDescriptor desc, string outputPath, ZugferdConfig zugferdConfig)
+        => SaveXml(desc, outputPath, zugferdConfig, null);
+
+    public static void SaveXml(InvoiceDescriptor desc, string outputPath, ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
     {
-        var version = ParseVersion(zugferdConfig.Version);
-        var profile = ParseProfile(zugferdConfig.Profile);
+        Log.Debug("XML-Export: Pfad={Path}", outputPath);
 
-        Log.Debug("XML-Export: Version={Version}, Profile={Profile}, Pfad={Path}", version, profile, outputPath);
-
-        using var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write);
-        desc.Save(stream, version, profile);
-        stream.Flush();
+        using (var stream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
+        {
+            WriteXml(desc, stream, zugferdConfig, diagnostics);
+        }
 
         Log.Debug("XML-Export abgeschlossen: {Bytes} Bytes geschrieben", new FileInfo(outputPath).Length);
     }
 
-    public static async Task SavePdfAsync(InvoiceDescriptor desc, string outputPath, string pdfTemplatePath, ZugferdConfig zugferdConfig)
+    /// <summary>
+    /// Gemeinsamer Stream-Kern von CLI und MCP-Probelauf: derselbe Codepfad bis einschließlich <c>desc.Save</c>;
+    /// nur das Ziel (Datei oder Speicherstrom) unterscheidet sich.
+    /// </summary>
+    public static void WriteXml(InvoiceDescriptor desc, Stream stream, ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
     {
-        var version = ParseVersion(zugferdConfig.Version);
-        var profile = ParseProfile(zugferdConfig.Profile);
-        var format = ParseFormat(zugferdConfig.Format);
+        var version = ResolveVersion(zugferdConfig, diagnostics);
+        var profile = ResolveProfile(zugferdConfig, diagnostics);
+
+        Log.Debug("XML-Export: Version={Version}, Profile={Profile}", version, profile);
+
+        desc.Save(stream, version, profile);
+        stream.Flush();
+    }
+
+    public static Task SavePdfAsync(InvoiceDescriptor desc, string outputPath, string pdfTemplatePath, ZugferdConfig zugferdConfig)
+        => SavePdfAsync(desc, outputPath, pdfTemplatePath, zugferdConfig, null);
+
+    public static async Task SavePdfAsync(InvoiceDescriptor desc, string outputPath, string pdfTemplatePath, ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
+    {
+        var version = ResolveVersion(zugferdConfig, diagnostics);
+        var profile = ResolveProfile(zugferdConfig, diagnostics);
+        var format = ResolveFormat(zugferdConfig, diagnostics);
 
         Log.Debug("PDF-Export: Version={Version}, Profile={Profile}, Format={Format}", version, profile, format);
         Log.Debug("PDF-Vorlage: {TemplatePath}", pdfTemplatePath);
@@ -35,32 +54,40 @@ public static class InvoiceExporter
         Log.Debug("PDF-Export abgeschlossen: {Bytes} Bytes geschrieben", new FileInfo(outputPath).Length);
     }
 
-    private static ZUGFeRDVersion ParseVersion(string version) =>
-        version switch
-        {
-            "1" or "1.0" => ZUGFeRDVersion.Version1,
-            "2.0" or "20" => ZUGFeRDVersion.Version20,
-            "2.3" or "23" => ZUGFeRDVersion.Version23,
-            _ => ZUGFeRDVersion.Version23,
-        };
+    /// <summary>Effektive Version; unbekannte Angabe → 2.3 mit Befund <see cref="DiagnosticCodes.ConfigValueFallback"/>.</summary>
+    public static ZUGFeRDVersion ResolveVersion(ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
+    {
+        if (ConfigValues.TryParseVersion(zugferdConfig.Version, out var version))
+            return version;
 
-    private static Profile ParseProfile(string profile) =>
-        profile.ToLowerInvariant() switch
-        {
-            "minimum" => Profile.Minimum,
-            "basicwl" => Profile.BasicWL,
-            "basic" => Profile.Basic,
-            "comfort" or "en16931" => Profile.Comfort,
-            "extended" => Profile.Extended,
-            "xrechnung" => Profile.XRechnung,
-            _ => Profile.Extended,
-        };
+        ReportFallback(diagnostics, "zugferd.version", zugferdConfig.Version, ConfigValues.Version);
+        return version;
+    }
 
-    private static ZUGFeRDFormats ParseFormat(string format) =>
-        format.ToUpperInvariant() switch
-        {
-            "CII" => ZUGFeRDFormats.CII,
-            "UBL" => ZUGFeRDFormats.UBL,
-            _ => ZUGFeRDFormats.CII,
-        };
+    /// <summary>Effektives Profil; unbekannte Angabe → Extended mit Befund <see cref="DiagnosticCodes.ConfigValueFallback"/>.</summary>
+    public static Profile ResolveProfile(ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
+    {
+        if (ConfigValues.TryParseProfile(zugferdConfig.Profile, out var profile))
+            return profile;
+
+        ReportFallback(diagnostics, "zugferd.profile", zugferdConfig.Profile, ConfigValues.ProfileSet);
+        return profile;
+    }
+
+    /// <summary>Effektives Format (nur PDF); unbekannte Angabe → CII mit Befund <see cref="DiagnosticCodes.ConfigValueFallback"/>.</summary>
+    public static ZUGFeRDFormats ResolveFormat(ZugferdConfig zugferdConfig, ICollection<MappingDiagnostic>? diagnostics)
+    {
+        if (ConfigValues.TryParseFormat(zugferdConfig.Format, out var format))
+            return format;
+
+        ReportFallback(diagnostics, "zugferd.format", zugferdConfig.Format, ConfigValues.Format);
+        return format;
+    }
+
+    private static void ReportFallback(ICollection<MappingDiagnostic>? diagnostics, string path, string value, ValueSet valueSet)
+    {
+        var message = $"Unbekannter Wert '{value}' in {path}, verwendet wird {valueSet.InvalidFallback}; zulässig sind {string.Join(", ", valueSet.Canonical)}";
+        Log.Warning("{Warning}", message);
+        diagnostics?.Add(new MappingDiagnostic(DiagnosticCodes.ConfigValueFallback, path, message));
+    }
 }

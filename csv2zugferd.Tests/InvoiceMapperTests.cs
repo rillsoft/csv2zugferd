@@ -84,9 +84,9 @@ public class InvoiceMapperTests
     [Test]
     public void Map_InvoiceTypeCode_Unknown_Throws()
     {
-        var exception = Should.Throw<InvalidOperationException>(() => MapWithInvoiceTypeCode(new FieldMapping { Value = "999" }));
+        var exception = Should.Throw<Csv2ZugferdException>(() => MapWithInvoiceTypeCode(new FieldMapping { Value = "999" }));
 
-        exception.Message.ShouldContain("BT-3");
+        exception.Code.ShouldBe(ErrorCodes.InvoiceTypeUnknown);
         exception.Message.ShouldContain("999");
     }
 
@@ -999,10 +999,12 @@ public class InvoiceMapperTests
     [Test]
     public void Map_PaymentMeans_UnknownTypeCode_Throws()
     {
-        Should.Throw<InvalidOperationException>(() => MapWithPaymentMeans(new PaymentMeansMapping
+        var exception = Should.Throw<Csv2ZugferdException>(() => MapWithPaymentMeans(new PaymentMeansMapping
         {
             TypeCode = new FieldMapping { Value = "Scheck" },
         }));
+
+        exception.Code.ShouldBe(ErrorCodes.PaymentMeansTypeUnknown);
     }
 
     [Test]
