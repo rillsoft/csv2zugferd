@@ -303,7 +303,9 @@ delivery:
     column: "DELIVERY_DATE"
 ```
 
-Alle drei Felder sind optional. `deliveryNoteNumber` und `deliveryNoteDate` werden gemeinsam als Lieferscheinreferenz geschrieben. `actualDeliveryDate` setzt das tatsächliche Lieferdatum.
+Alle drei Felder sind optional. `deliveryNoteNumber` und `deliveryNoteDate` werden gemeinsam als Lieferscheinreferenz geschrieben. `actualDeliveryDate` setzt das tatsächliche Lieferdatum (BT-72).
+
+Sind weder Lieferschein noch Lieferdatum konfiguriert, wird das Rechnungsdatum als Leistungsdatum geschrieben und eine Warnung protokolliert. Der Block `ApplicableHeaderTradeDelivery` ist im ZUGFeRD-Schema Pflicht; ohne Inhalt würde die XML-Datei die Validierung nicht bestehen.
 
 ## Bestellreferenz
 
@@ -355,7 +357,7 @@ lineItems:
       column: "Rabatt_Grund"
 ```
 
-`allowanceCharge` ist optional. `isDiscount: true` erzeugt einen `TradeAllowance` (Rabatt), `false` einen `TradeCharge` (Zuschlag). `chargePercentage` akzeptiert Werte wie `10`, `10.00` oder `10%`. Im `columns`-Modus wird Rabatt stattdessen über `discountPercent` in `fields` konfiguriert.
+`allowanceCharge` ist optional. `isDiscount: true` erzeugt einen Positionsrabatt (BG-27), `false` einen Positionszuschlag (BG-28), jeweils als `SpecifiedTradeAllowanceCharge` in der Positionsabrechnung mit Basisbetrag, Prozentsatz und Grund. Der Zeilennettobetrag (BT-131) ist bereits um den Rabatt gemindert bzw. um den Zuschlag erhöht; die Summen auf Dokumentebene folgen daraus. `chargePercentage` akzeptiert Werte wie `10`, `10.00` oder `10%`. Im `columns`-Modus wird Rabatt stattdessen über `discountPercent` in `fields` konfiguriert.
 
 ### Modus `columns`
 

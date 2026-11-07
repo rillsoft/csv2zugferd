@@ -174,6 +174,39 @@ public class InvoiceExporterTests
     }
 
     [Test]
+    public void Export_LineAllowance_WritesSpecifiedTradeAllowanceChargeAndNetLineTotal()
+    {
+        var path = Path.Combine(_tempDir, "allowance.xml");
+        InvoiceExporter.SaveXml(_desc, path, _zugferdConfig);
+
+        var xml = XDocument.Load(path);
+        var firstItem = xml.Descendants(Ram + "IncludedSupplyChainTradeLineItem").First();
+        var allowance = firstItem.Descendants(Ram + "SpecifiedLineTradeSettlement").Elements(Ram + "SpecifiedTradeAllowanceCharge").Single();
+
+        allowance.Descendants(Udt + "Indicator").Single().Value.ShouldBe("false");
+        allowance.Element(Ram + "ActualAmount")!.Value.ShouldBe("17.94");
+        firstItem.Descendants(Ram + "LineTotalAmount").Single().Value.ShouldBe("71.76");
+        // Kein Brutto-Preisblock ohne ChargeAmount (Schemafehler)
+        firstItem.Descendants(Ram + "GrossPriceProductTradePrice").ShouldBeEmpty();
+        xml.Descendants(Ram + "SpecifiedTradeSettlementHeaderMonetarySummation").Elements(Ram + "LineTotalAmount").Single().Value.ShouldBe("85.26");
+        xml.Descendants(Ram + "SpecifiedTradeSettlementHeaderMonetarySummation").Elements(Ram + "AllowanceTotalAmount").Single().Value.ShouldBe("0.00");
+    }
+
+    [Test]
+    public void Export_CreditNoteWithoutDelivery_WritesApplicableHeaderTradeDelivery()
+    {
+        var config = TestHelper.LoadTestConfig("config_creditnote.yml");
+        var desc = TestHelper.MapFromTestData("config_creditnote.yml", "test_creditnote.csv");
+        var path = Path.Combine(_tempDir, "creditnote.xml");
+
+        InvoiceExporter.SaveXml(desc, path, config.Zugferd);
+
+        var xml = XDocument.Load(path);
+        var delivery = xml.Descendants(Ram + "ApplicableHeaderTradeDelivery").ShouldHaveSingleItem();
+        delivery.Descendants(Udt + "DateTimeString").Single().Value.ShouldBe("20130612");
+    }
+
+    [Test]
     public void Export_LineTotalsSumEqualsHeaderLineTotalAmount()
     {
         var (config, rows) = TestHelper.CreateRoundingTestCase();
@@ -200,6 +233,7 @@ public class InvoiceExporterTests
 
     private static readonly XNamespace Rsm = "urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100";
     private static readonly XNamespace Ram = "urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100";
+    private static readonly XNamespace Udt = "urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100";
 
     private static decimal ParseAmount(string value) =>
         decimal.Parse(value, System.Globalization.CultureInfo.InvariantCulture);

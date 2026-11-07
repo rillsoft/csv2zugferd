@@ -314,6 +314,27 @@ public class InvoiceMapperTests
         desc.SellerTaxRegistration.Count.ShouldBe(2);
     }
 
+    // ── 4.3.2a Lieferung ──────────────────────────────────────────────────
+
+    [Test]
+    public void Map_Delivery_FromConfig_UsesMappedDate()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        desc.ActualDeliveryDate.ShouldBe(new DateTime(2013, 6, 3));
+        desc.DeliveryNoteReferencedDocument.ShouldNotBeNull();
+    }
+
+    [Test]
+    public void Map_Delivery_WithoutConfig_FallsBackToInvoiceDate()
+    {
+        // ApplicableHeaderTradeDelivery ist im CII-Schema Pflicht; ohne Lieferdaten gilt Leistungsdatum = Rechnungsdatum
+        var desc = TestHelper.MapFromTestData("config_creditnote.yml", "test_creditnote.csv");
+
+        desc.ActualDeliveryDate.ShouldBe(new DateTime(2013, 6, 12));
+        desc.DeliveryNoteReferencedDocument.ShouldBeNull();
+    }
+
     // ── 4.3.3 Positionen (rows) ───────────────────────────────────────────
 
     [Test]
@@ -360,10 +381,25 @@ public class InvoiceMapperTests
     public void Map_RowsMode_FirstItemDiscount()
     {
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
-        var charges = desc.TradeLineItems[0].GetTradeAllowanceCharges();
+        var allowances = desc.TradeLineItems[0].GetSpecifiedTradeAllowances();
 
-        charges.Count.ShouldBe(1);
-        charges[0].ActualAmount.ShouldBe(17.94m);
+        allowances.Count.ShouldBe(1);
+        allowances[0].ActualAmount.ShouldBe(17.94m);
+        allowances[0].BasisAmount.ShouldBe(89.70m);
+        allowances[0].ChargePercentage.ShouldBe(20m);
+        // Kein Preisrabatt (BT-147), sondern Positionsrabatt auf Abrechnungsebene (BG-27)
+        desc.TradeLineItems[0].GetTradeAllowanceCharges().Count.ShouldBe(0);
+        desc.TradeLineItems[0].GrossUnitPrice.ShouldBeNull();
+    }
+
+    [Test]
+    public void Map_RowsMode_FirstItemDiscount_ReducesLineTotal()
+    {
+        var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
+
+        // 6 × 14,95 = 89,70 − 20 % (17,94) = 71,76
+        desc.TradeLineItems[0].LineTotalAmount.ShouldBe(71.76m);
+        desc.TradeLineItems[1].LineTotalAmount.ShouldBe(13.50m);
     }
 
     [Test]
@@ -371,6 +407,7 @@ public class InvoiceMapperTests
     {
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
 
+        desc.TradeLineItems[1].GetSpecifiedTradeAllowances().Count.ShouldBe(0);
         desc.TradeLineItems[1].GetTradeAllowanceCharges().Count.ShouldBe(0);
     }
 
@@ -683,7 +720,8 @@ public class InvoiceMapperTests
     {
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
 
-        desc.LineTotalAmount!.Value.ShouldBe(103.20m);
+        // Summe der Zeilennettobeträge nach Positionsrabatt: 71,76 + 13,50
+        desc.LineTotalAmount!.Value.ShouldBe(85.26m);
     }
 
     [Test]
@@ -691,7 +729,8 @@ public class InvoiceMapperTests
     {
         var desc = TestHelper.MapFromTestData("config_rows.yml", "test_rows.csv");
 
-        desc.AllowanceTotalAmount!.Value.ShouldBe(17.94m);
+        // BT-107 nur für Rabatte auf Dokumentebene; Positionsrabatte stecken in BT-131
+        desc.AllowanceTotalAmount!.Value.ShouldBe(0m);
     }
 
     [Test]
