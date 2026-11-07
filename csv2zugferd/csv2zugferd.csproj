@@ -34,4 +34,11 @@
     </Content>
   </ItemGroup>
 
+  <!-- MCP-Ressourcen: README und Beispielkonfigurationen eingebettet (Mcp/DocResources.cs) -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\README.md" LogicalName="Csv2Zugferd.Docs.README.md" />
+    <EmbeddedResource Include="..\testdata\config_rows.yml" LogicalName="Csv2Zugferd.Docs.config_rows.yml" />
+    <EmbeddedResource Include="..\testdata\config_columns_suffix.yml" LogicalName="Csv2Zugferd.Docs.config_columns_suffix.yml" />
+  </ItemGroup>
+
 </Project>

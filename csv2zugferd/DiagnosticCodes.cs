@@ -9,6 +9,9 @@ public static class DiagnosticCodes
     /// <summary>Konfiguriertes Feld hat in dieser Betriebsart oder grundsätzlich keine Wirkung.</summary>
     public const string ConfigFieldIgnored = "config_field_ignored";
 
+    /// <summary>Ein in dieser Betriebsart erforderlicher Abschnitt fehlt (z. B. columnPattern im columns-Modus); es entstehen keine Positionen.</summary>
+    public const string ConfigFieldMissing = "config_field_missing";
+
     /// <summary>Unbekannter Konfigurationswert, der Mapper oder Exporter fällt auf den dokumentierten Rückfall zurück.</summary>
     public const string ConfigValueFallback = "config_value_fallback";
 
@@ -60,6 +63,7 @@ public static class DiagnosticCodes
     public static readonly IReadOnlyList<string> All =
     [
         ConfigFieldIgnored,
+        ConfigFieldMissing,
         ConfigValueFallback,
         InvalidDate,
         InvalidDecimal,

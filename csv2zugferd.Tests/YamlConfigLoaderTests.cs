@@ -203,6 +203,16 @@ public class YamlConfigLoaderTests
     }
 
     [Test]
+    public void LoadFromString_ScalarInsteadOfMapping_ExplainsExpectedObject()
+    {
+        var exception = Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.LoadFromString("mapping:\n  lineItems:\n    fixedFields:\n      unitCode: C62\n"));
+
+        exception.Code.ShouldBe(ErrorCodes.ConfigInvalidYaml);
+        exception.Message.ShouldContain("Objekt");
+        exception.Message.ShouldContain("value");
+    }
+
+    [Test]
     public void LoadFromString_Empty_ThrowsConfigInvalidYaml()
     {
         Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.LoadFromString(string.Empty))

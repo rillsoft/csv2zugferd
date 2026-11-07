@@ -62,7 +62,7 @@ public static class McpServerCommand
 
     public static McpServerOptions CreateServerOptions()
     {
-        return new McpServerOptions
+        var options = new McpServerOptions
         {
             ServerInfo = new Implementation
             {
@@ -74,7 +74,7 @@ public static class McpServerCommand
             },
             ServerInstructions =
                 "Workflow: 1) csv2zugferd_csv_header_get reads the CSV columns. " +
-                "2) csv2zugferd_config_schema_get returns the complete configuration reference (every YAML key, allowed values, effects). " +
+                "2) csv2zugferd_config_schema_get returns the configuration reference (every YAML key, allowed values, effects); pass section (e.g. mapping.lineItems) for one subtree. " +
                 "3) Draft the YAML and check it with csv2zugferd_config_get (pass csvPath to compare against the columns). " +
                 "4) csv2zugferd_invoice_get runs the real mapping without writing files; fix the YAML until totals and warnings are right. " +
                 "5) csv2zugferd_config_file_create saves the YAML and returns the CLI command for production runs. " +
@@ -82,13 +82,18 @@ public static class McpServerCommand
             Capabilities = new ServerCapabilities
             {
                 Tools = new ToolsCapability(),
+                Resources = new ResourcesCapability(),
             },
             Handlers = new McpServerHandlers
             {
                 ListToolsHandler = (_, _) => ValueTask.FromResult(ToolRegistry.ListTools()),
                 CallToolHandler = ToolRegistry.CallToolAsync,
+                ListResourcesHandler = (_, _) => ValueTask.FromResult(DocResources.List()),
+                ReadResourceHandler = (context, _) => ValueTask.FromResult(DocResources.Read(context.Params?.Uri)),
             },
         };
+        options.Filters.Message.OutgoingFilters.Add(ErrorDataFilter.Apply);
+        return options;
     }
 
     /// <summary>Produktversion ohne Build-Metadaten (z. B. "1.3.0").</summary>

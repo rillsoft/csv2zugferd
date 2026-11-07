@@ -100,6 +100,34 @@ public class StdioProtocolTests
     }
 
     [Test]
+    public async Task ResourcesList_ContainsThreeResources()
+    {
+        var init = await _client.InitializeAsync();
+        init["result"]!["capabilities"]!["resources"].ShouldNotBeNull();
+
+        var response = await _client.RequestAsync("resources/list", new JsonObject());
+
+        response["error"].ShouldBeNull();
+        var resources = response["result"]!["resources"]!.AsArray();
+        resources.Count.ShouldBe(3);
+        resources.Select(r => r!["uri"]!.GetValue<string>()).ShouldContain("csv2zugferd://docs/config-reference");
+        resources.All(r => r!["mimeType"] != null && r["name"] != null && r["description"] != null).ShouldBeTrue();
+    }
+
+    [Test]
+    public async Task ResourcesRead_ConfigReference_StartsWithReadmeHeading()
+    {
+        await _client.InitializeAsync();
+
+        var response = await _client.RequestAsync("resources/read", new JsonObject { ["uri"] = "csv2zugferd://docs/config-reference" });
+
+        response["error"].ShouldBeNull();
+        var contents = response["result"]!["contents"]!.AsArray().Single()!;
+        contents["mimeType"]!.GetValue<string>().ShouldBe("text/markdown");
+        contents["text"]!.GetValue<string>().TrimStart((char)0xFEFF).ShouldStartWith("# csv2zugferd Dokumentation");
+    }
+
+    [Test]
     public async Task Stdout_ContainsOnlyJsonRpcLines()
     {
         await _client.InitializeAsync();

@@ -337,6 +337,20 @@ public static class ConfigValues
         return false;
     }
 
+    // --- Kanonische Namen der effektiven Ausgabewerte ---
+
+    public static string CanonicalVersion(ZUGFeRDVersion version) =>
+        version switch
+        {
+            ZUGFeRDVersion.Version1 => "1.0",
+            ZUGFeRDVersion.Version20 => "2.0",
+            _ => "2.3",
+        };
+
+    public static string CanonicalProfile(Profile profile) => profile.ToString();
+
+    public static string CanonicalFormat(ZUGFeRDFormats format) => format.ToString();
+
     // --- Helfer ---
 
     private static bool EqualsAny(string value, params string[] candidates) =>

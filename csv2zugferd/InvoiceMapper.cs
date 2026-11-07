@@ -81,6 +81,17 @@ public static class InvoiceMapper
         return desc;
     }
 
+    /// <summary>
+    /// Strukturelle Pruefung einer Konfiguration ohne Daten: ignorierte und fehlende Abschnitte, unbekannte Modi.
+    /// Dieselbe Pruefung laeuft zu Beginn jedes Mappings; hier fuer den MCP-Konfigurationscheck ohne CSV.
+    /// </summary>
+    public static IReadOnlyList<MappingDiagnostic> CheckConfiguration(AppConfig config)
+    {
+        var diagnostics = new List<MappingDiagnostic>();
+        ReportIgnoredFields(new MappingContext(config.Csv, diagnostics), config.Mapping);
+        return diagnostics;
+    }
+
     /// <summary>Meldet konfigurierte Felder, die in der gewählten Betriebsart oder grundsätzlich keine Wirkung haben.</summary>
     private static void ReportIgnoredFields(MappingContext ctx, MappingConfig mapping)
     {
@@ -98,6 +109,8 @@ public static class InvoiceMapper
 
             if (mode == ConfigValues.LineItemsModeRows)
             {
+                if (lineItems.Fields == null)
+                    ctx.Missing("mapping.lineItems.fields", "im rows-Modus entstehen ohne lineItems.fields keine Positionen");
                 if (lineItems.ColumnPattern != null)
                     ctx.Ignored("mapping.lineItems.columnPattern", "wirkt nur im columns-Modus");
                 if (lineItems.FixedFields is { Count: > 0 })
@@ -105,6 +118,8 @@ public static class InvoiceMapper
             }
             else
             {
+                if (lineItems.ColumnPattern == null)
+                    ctx.Missing("mapping.lineItems.columnPattern", "im columns-Modus entstehen ohne lineItems.columnPattern keine Positionen");
                 if (lineItems.AllowanceCharge != null)
                     ctx.Ignored("mapping.lineItems.allowanceCharge", "wirkt nur im rows-Modus; im columns-Modus Rabatte über lineItems.fields.discountPercent");
                 if (lineItems.Fields?.UnitCode != null)
@@ -768,6 +783,13 @@ public static class InvoiceMapper
             var message = $"{path} ist konfiguriert, {reason}";
             Log.Warning("{Warning}", message);
             Add(new MappingDiagnostic(DiagnosticCodes.ConfigFieldIgnored, path, message));
+        }
+
+        public void Missing(string path, string reason)
+        {
+            var message = $"{path} fehlt, {reason}";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.ConfigFieldMissing, path, message));
         }
 
         public void Fallback(string path, string value, ValueSet valueSet, string? where = null)

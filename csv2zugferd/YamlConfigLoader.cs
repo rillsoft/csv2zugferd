@@ -145,8 +145,14 @@ public static class YamlConfigLoader
     private static string Join(string path, string key) =>
         path.Length == 0 ? key : $"{path}.{key}";
 
-    private static string Describe(YamlException ex) =>
-        ex.InnerException?.Message is { Length: > 0 } inner ? $"{ex.Message} ({inner})" : ex.Message;
+    private static string Describe(YamlException ex)
+    {
+        var inner = ex.InnerException?.Message;
+        var text = string.IsNullOrEmpty(inner) ? ex.Message : $"{ex.Message} ({inner})";
+        if (inner != null && inner.Contains("Invalid cast from 'System.String' to 'Csv2Zugferd.Models.", StringComparison.Ordinal))
+            text += ". Hinweis: An dieser Stelle wird ein Objekt mit Unterschlüsseln erwartet (z. B. value, column, default, rules), kein einfacher Text";
+        return text;
+    }
 
     public static AppConfig CreateDefault()
     {
