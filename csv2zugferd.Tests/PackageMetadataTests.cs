@@ -56,4 +56,25 @@ public class PackageMetadataTests
     {
         Csv2Zugferd.Mcp.McpServerCommand.GetVersion().ShouldBe(BuildVersion());
     }
+
+    [Test]
+    public void Dockerfile_VersionLabelAndServerName_MatchManifest()
+    {
+        var dockerfile = File.ReadAllText(Path.Combine(RepoRoot(), "Dockerfile"));
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot(), ".mcp", "server.json")));
+        var name = document.RootElement.GetProperty("name").GetString()!;
+
+        Regex.Match(dockerfile, @"ARG APP_VERSION=(\S+)").Groups[1].Value.ShouldBe(BuildVersion());
+        dockerfile.ShouldContain($"io.modelcontextprotocol.server.name=\"{name}\"");
+        dockerfile.ShouldContain("ENTRYPOINT [\"dotnet\", \"/app/csv2zugferd.dll\"]");
+        dockerfile.ShouldContain("CMD [\"mcp\"]");
+    }
+
+    [Test]
+    public void GlamaJson_NamesMaintainer()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(RepoRoot(), "glama.json")));
+        document.RootElement.GetProperty("$schema").GetString().ShouldBe("https://glama.ai/mcp/schemas/server.json");
+        document.RootElement.GetProperty("maintainers").EnumerateArray().Select(m => m.GetString()).ShouldContain("rillsoft");
+    }
 }

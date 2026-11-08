@@ -69,7 +69,7 @@ Vorbereitung: Für die Einrichtung mit einem KI-Assistenten anonymisierte Beispi
 
 ### Start und Client-Konfiguration
 
-Der Server wird vom MCP-Client gestartet und liest JSON-RPC von stdin; stdout trägt ausschließlich JSON-RPC, Logs gehen nach `logs/zugferd-*.log` im Arbeitsverzeichnis und Warnungen zusätzlich nach stderr. `--verbose` schaltet die Logdatei auf Debug.
+Der Server wird vom MCP-Client gestartet und liest JSON-RPC von stdin; stdout trägt ausschließlich JSON-RPC, Warnungen gehen zusätzlich nach stderr. Die Logdatei `zugferd-*.log` liegt nicht im Arbeitsverzeichnis (das bestimmt der Client), sondern unter `csv2zugferd\logs` im lokalen Anwendungsdatenordner (Windows `%LOCALAPPDATA%\csv2zugferd\logs`, Linux und macOS `~/.local/share/csv2zugferd/logs`); die Umgebungsvariable `CSV2ZUGFERD_LOG_DIR` setzt ein anderes Verzeichnis. `--verbose` schaltet die Logdatei auf Debug.
 
 Zwei Wege zum Start: die Windows-Exe aus dem [GitHub-Release](https://github.com/rillsoft/csv2zugferd/releases) (`csv2zugferd.exe mcp`, kein .NET nötig) oder das .NET-Tool-Paket `csv2zugferd` von NuGet, das MCP-Clients mit `dnx csv2zugferd@1.3.0 mcp` starten (benötigt das .NET-10-SDK; läuft unter Windows, Linux und macOS). Mit dem Release 1.3.0 erscheint der Server in der [Official MCP Registry](https://registry.modelcontextprotocol.io/) unter dem Namen `de.zugferd-tools/csv2zugferd`.
 
@@ -116,6 +116,30 @@ VS Code (`.vscode/mcp.json`):
       "type": "stdio",
       "command": "C:\\Tools\\csv2zugferd.exe",
       "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Docker
+
+Für Linux-Umgebungen und Kataloge, die den Server selbst bauen, liegt ein `Dockerfile` im Repository. Das Image ist framework-abhängig auf `mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled-extra` (rund 207 MB, ohne Shell) und läuft ohne Root-Rechte:
+
+```bash
+docker build -t csv2zugferd .
+docker run -i --rm -v "/pfad/zu/rechnungen:/data" csv2zugferd
+```
+
+Der Container startet `csv2zugferd mcp` und spricht JSON-RPC über stdin und stdout. Die Werkzeuge sehen nur den eingehängten Ordner `/data` (Arbeitsverzeichnis im Container); Pfade in Werkzeugaufrufen lauten entsprechend `/data/<datei>`. Die Logdatei bleibt im Container (`/tmp/csv2zugferd/logs`). Dateien, die der Container unter `/data` anlegt (`csv2zugferd_config_file_create`, CLI-Ausgaben), gehören auf Linux-Hosts dem Benutzer mit der ID 1654 (`app` im Image). Mit Argumenten hinter dem Imagenamen läuft statt des Servers die CLI, zum Beispiel `docker run --rm -v "/pfad:/data" csv2zugferd --csv /data/rechnung.csv --pdf /data/vorlage.pdf --config /data/config.yml --output /data/out`.
+
+Claude Desktop mit dem Container:
+
+```json
+{
+  "mcpServers": {
+    "csv2zugferd": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "C:\\Rechnungen:/data", "csv2zugferd"]
     }
   }
 }
