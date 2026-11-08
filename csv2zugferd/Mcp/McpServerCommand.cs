@@ -10,19 +10,26 @@ namespace Csv2Zugferd.Mcp;
 /// <summary>
 /// Unterbefehl <c>csv2zugferd mcp</c>: MCP-Server über stdio. stdout trägt ausschließlich JSON-RPC,
 /// deshalb gibt es keinen Konsolen-Sink auf stdout; Logs gehen in die Datei, Warnungen zusätzlich nach stderr.
+/// Die Logdatei liegt nicht im Arbeitsverzeichnis (das bestimmt der MCP-Client), sondern unter
+/// <see cref="ResolveLogDirectory"/>.
 /// </summary>
 public static class McpServerCommand
 {
     public const string ServerName = "csv2zugferd";
     public const string WebsiteUrl = "https://zugferd-tools.de/docs/mcp-server/";
 
+    /// <summary>Umgebungsvariable, die das Logverzeichnis des MCP-Servers vorgibt.</summary>
+    public const string LogDirectoryEnvironmentVariable = "CSV2ZUGFERD_LOG_DIR";
+
     public static async Task<int> RunAsync(bool verbose, CancellationToken cancellationToken)
     {
         var logLevel = verbose ? LogEventLevel.Debug : LogEventLevel.Information;
 
+        var logDirectory = ResolveLogDirectory();
+
         Log.Logger = new LoggerConfiguration()
             .MinimumLevel.Is(logLevel)
-            .WriteTo.File("logs/zugferd-.log",
+            .WriteTo.File(Path.Combine(logDirectory, "zugferd-.log"),
                 rollingInterval: RollingInterval.Day,
                 outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {Message:lj}{NewLine}{Exception}")
             .WriteTo.Console(
@@ -34,7 +41,7 @@ public static class McpServerCommand
 
         try
         {
-            Log.Information("MCP-Server (stdio) gestartet, Version {Version}", GetVersion());
+            Log.Information("MCP-Server (stdio) gestartet, Version {Version}, Logverzeichnis {LogDirectory}", GetVersion(), logDirectory);
 
             var options = CreateServerOptions();
             await using var transport = new StdioServerTransport(options, loggerFactory: null);
@@ -94,6 +101,24 @@ public static class McpServerCommand
         };
         options.Filters.Message.OutgoingFilters.Add(ErrorDataFilter.Apply);
         return options;
+    }
+
+    /// <summary>
+    /// Logverzeichnis des MCP-Servers: <c>CSV2ZUGFERD_LOG_DIR</c>, sonst <c>csv2zugferd/logs</c> unter dem
+    /// lokalen Anwendungsdatenordner des Benutzers (Windows <c>%LOCALAPPDATA%</c>, Linux und macOS
+    /// <c>~/.local/share</c>), sonst das Temp-Verzeichnis. Das Arbeitsverzeichnis eines MCP-Clients ist
+    /// beliebig (Installationsordner, Systemordner, eingehängter Nutzerordner im Container) und deshalb
+    /// kein Ablageort.
+    /// </summary>
+    public static string ResolveLogDirectory()
+    {
+        var configured = Environment.GetEnvironmentVariable(LogDirectoryEnvironmentVariable);
+        if (!string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(configured);
+
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var root = string.IsNullOrEmpty(localAppData) ? Path.GetTempPath() : localAppData;
+        return Path.Combine(root, "csv2zugferd", "logs");
     }
 
     /// <summary>Produktversion ohne Build-Metadaten (z. B. "1.3.0").</summary>

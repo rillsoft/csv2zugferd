@@ -49,7 +49,7 @@ rootCommand.Options.Add(verboseOption);
 // Unterbefehl "mcp": MCP-Server über stdio als Einrichtungsassistent für die YAML-Konfiguration.
 var mcpVerboseOption = new Option<bool>("--verbose", "-v")
 {
-    Description = "Debug-Level in der Logdatei (logs/zugferd-*.log)",
+    Description = "Debug-Level in der Logdatei (CSV2ZUGFERD_LOG_DIR, sonst csv2zugferd/logs im lokalen Anwendungsdatenordner)",
 };
 
 var mcpCommand = new Command("mcp", "Startet den MCP-Server (stdio) als Einrichtungsassistent für die YAML-Konfiguration");
