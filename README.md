@@ -1,5 +1,7 @@
 ﻿# csv2zugferd Dokumentation
 
+<!-- mcp-name: de.zugferd-tools/csv2zugferd -->
+
 **Website:** [zugferd-tools.de](https://zugferd-tools.de)
 
 `csv2zugferd` ist ein .NET-CLI-Tool, das Rechnungsdaten aus CSV-Dateien liest und daraus ZUGFeRD-konforme XML-Dateien oder PDF-Dateien mit eingebettetem ZUGFeRD-XML erzeugt. Die Struktur der CSV-Datei und das Mapping auf ZUGFeRD-Felder werden über eine YAML-Konfiguration gesteuert.
@@ -58,6 +60,119 @@ dotnet run --project .\csv2zugferd\csv2zugferd.csproj -- --csv .\test\0002486.cs
 | `--verbose` | `-v` | Nein | Debug-Ausgabe aktivieren |
 
 Die Ausgabedateien werden anhand der Rechnungsnummer benannt, zum Beispiel `0002483.xml` und `0002483.pdf`.
+
+## MCP-Server (Einrichtungsassistent)
+
+Seit Version 1.3.0 stellt `csv2zugferd mcp` das Tool als MCP-Server (Model Context Protocol) über stdio bereit. Zweck ist die **Einrichtung**: Ein KI-Assistent in Claude Desktop, Claude Code oder VS Code liest den Kopf einer CSV-Datei, entwirft die YAML-Konfiguration, prüft sie im Probelauf gegen den echten Mapping-Code und speichert sie als Datei. Der **Produktivlauf bleibt bei der CLI**: lokal, deterministisch, ohne Modell und ohne Cloud-Upload durch csv2zugferd. Die gespeicherte Konfiguration gilt für alle weiteren Rechnungen derselben CSV-Struktur.
+
+Vorbereitung: Für die Einrichtung mit einem KI-Assistenten anonymisierte Beispieldaten verwenden. Die Werkzeuge liefern Zellwerte nur auf Anforderung (`sampleRows`, `includeLineItems`, `includeParties`).
+
+### Start und Client-Konfiguration
+
+Der Server wird vom MCP-Client gestartet und liest JSON-RPC von stdin; stdout trägt ausschließlich JSON-RPC, Warnungen gehen zusätzlich nach stderr. Die Logdatei `zugferd-*.log` liegt nicht im Arbeitsverzeichnis (das bestimmt der Client), sondern unter `csv2zugferd\logs` im lokalen Anwendungsdatenordner (Windows `%LOCALAPPDATA%\csv2zugferd\logs`, Linux und macOS `~/.local/share/csv2zugferd/logs`); die Umgebungsvariable `CSV2ZUGFERD_LOG_DIR` setzt ein anderes Verzeichnis. `--verbose` schaltet die Logdatei auf Debug.
+
+Zwei Wege zum Start: die Windows-Exe aus dem [GitHub-Release](https://github.com/rillsoft/csv2zugferd/releases) (`csv2zugferd.exe mcp`, kein .NET nötig) oder das .NET-Tool-Paket `csv2zugferd` von NuGet, das MCP-Clients mit `dnx csv2zugferd@1.3.0 mcp` starten (benötigt das .NET-10-SDK; läuft unter Windows, Linux und macOS). Mit dem Release 1.3.0 erscheint der Server in der [Official MCP Registry](https://registry.modelcontextprotocol.io/) unter dem Namen `de.zugferd-tools/csv2zugferd`.
+
+Claude Desktop (`claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "csv2zugferd": {
+      "command": "C:\\Tools\\csv2zugferd.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Claude Desktop mit dem NuGet-Paket statt der Exe:
+
+```json
+{
+  "mcpServers": {
+    "csv2zugferd": {
+      "command": "dnx",
+      "args": ["csv2zugferd@1.3.0", "mcp"]
+    }
+  }
+}
+```
+
+Claude Code:
+
+```powershell
+claude mcp add csv2zugferd -- C:\Tools\csv2zugferd.exe mcp
+# oder mit dem NuGet-Paket:
+claude mcp add csv2zugferd -- dnx csv2zugferd@1.3.0 mcp
+```
+
+VS Code (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "csv2zugferd": {
+      "type": "stdio",
+      "command": "C:\\Tools\\csv2zugferd.exe",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+### Docker
+
+Für Linux-Umgebungen und Kataloge, die den Server selbst bauen, liegt ein `Dockerfile` im Repository. Das Image ist framework-abhängig auf `mcr.microsoft.com/dotnet/runtime:10.0-noble-chiseled-extra` (rund 207 MB, ohne Shell) und läuft ohne Root-Rechte:
+
+```bash
+docker build -t csv2zugferd .
+docker run -i --rm -v "/pfad/zu/rechnungen:/data" csv2zugferd
+```
+
+Der Container startet `csv2zugferd mcp` und spricht JSON-RPC über stdin und stdout. Die Werkzeuge sehen nur den eingehängten Ordner `/data` (Arbeitsverzeichnis im Container); Pfade in Werkzeugaufrufen lauten entsprechend `/data/<datei>`. Die Logdatei bleibt im Container (`/tmp/csv2zugferd/logs`). Dateien, die der Container unter `/data` anlegt (`csv2zugferd_config_file_create`, CLI-Ausgaben), gehören auf Linux-Hosts dem Benutzer mit der ID 1654 (`app` im Image). Mit Argumenten hinter dem Imagenamen läuft statt des Servers die CLI, zum Beispiel `docker run --rm -v "/pfad:/data" csv2zugferd --csv /data/rechnung.csv --pdf /data/vorlage.pdf --config /data/config.yml --output /data/out`.
+
+Claude Desktop mit dem Container:
+
+```json
+{
+  "mcpServers": {
+    "csv2zugferd": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "-v", "C:\\Rechnungen:/data", "csv2zugferd"]
+    }
+  }
+}
+```
+
+### Werkzeuge
+
+| Werkzeug | Zweck | Wirkung |
+|---|---|---|
+| `csv2zugferd_csv_header_get` | Spaltennamen und Zeilenzahl einer CSV lesen, optional bis zu 3 Beispielzeilen (`sampleRows`) | lesend |
+| `csv2zugferd_config_schema_get` | **Vollständige Konfigurationsreferenz**: JSON-Schema aller YAML-Schlüssel mit Beschreibung, Typ, Default und zulässigen Werten plus Semantik je Schlüssel (Wirkung, Modusabhängigkeit, Auflösungsreihenfolge, Rückfall). `section` liefert einen Teilbaum, z. B. `mapping.lineItems` | lesend |
+| `csv2zugferd_config_get` | Konfiguration (Pfad oder YAML-Text) strukturell prüfen: effektive Einstellungen, gemappte Felder mit Quellen, unbekannte Schlüssel, unzulässige Werte mit Rückfall, ignorierte oder fehlende Abschnitte; mit `csvPath` Spaltenabgleich (fehlende und ungenutzte Spalten) | lesend |
+| `csv2zugferd_invoice_get` | Probelauf mit dem echten Mapping ohne Ausgabedatei: Rechnungsnummer, Typ, Summen, Steueraufschlüsselung, Warnungen mit Code und Pfad, XML-Größe; optional Positionen, Parteien und PDF-Probelauf in eine temporäre Datei (`pdfTemplatePath`) | lesend |
+| `csv2zugferd_config_file_create` | Geprüfte YAML als Datei speichern (UTF-8 ohne BOM); vorhandene Datei nur mit `overwrite: true`; liefert den CLI-Befehl für den Produktivlauf | schreibend |
+
+Die Werkzeuge nutzen denselben Code wie die CLI. `csv2zugferd_config_schema_get` ersetzt das Lesen dieser README: Alle Konfigurationsmöglichkeiten sind allein über die Werkzeuge abrufbar und prüfbar.
+
+Ressourcen (`resources/list`): `csv2zugferd://docs/config-reference` (diese README), `csv2zugferd://examples/config-rows` und `csv2zugferd://examples/config-columns-suffix` (Beispielkonfigurationen aus `testdata/`).
+
+### Ablauf der Inbetriebnahme
+
+1. **CSV-Struktur erfassen:** `csv2zugferd_csv_header_get` mit dem Pfad der (anonymisierten) CSV, bei Bedarf `sampleRows: 2`.
+2. **Mapping erarbeiten:** `csv2zugferd_config_schema_get` liefert Schlüssel, Werte und Wirkung; der Assistent entwirft die YAML.
+3. **Prüfen und korrigieren:** `csv2zugferd_config_get` mit `configYaml` und `csvPath` meldet Tippfehler (`unknownKeys`), unzulässige Werte (`invalidValues`) und fehlende Spalten (`columnsMissing`); `csv2zugferd_invoice_get` zeigt Summen, Steuergruppen und Warnungen des echten Mappings. Wiederholen, bis das Ergebnis stimmt.
+4. **Speichern:** `csv2zugferd_config_file_create` schreibt die YAML und gibt den CLI-Befehl zurück.
+5. **Produktivlauf:** Den Befehl mit PDF-Vorlage und Ausgabeverzeichnis ausführen, z. B. `csv2zugferd --csv rechnung.csv --pdf vorlage.pdf --config config.yml --output out`. Dafür ist weder ein Modell noch ein laufender MCP-Server nötig.
+
+### Antworten, Fehler und Grenzen
+
+- Erfolgreiche Antworten kommen als `structuredContent` und als inhaltsgleicher JSON-Text; jedes Werkzeug veröffentlicht ein `outputSchema`, gegen das die Antwort vor dem Senden geprüft wird.
+- Warnungen sind Objekte `{code, path, message}` mit stabilem englischem Code (z. B. `invalid_date`, `config_field_ignored`, `invalid_iban_checksum`), vollständigem Konfigurationspfad und deutschem Text.
+- Fachliche Ablehnungen sind Tool-Ergebnisse mit `isError: true`; die erste Textzeile ist der Code (z. B. `csv_file_not_found`, `config_invalid_yaml`, `file_exists`), `_meta.errorCode` trägt ihn zusätzlich. Unbekannte Werkzeuge und Schemaverletzungen sind JSON-RPC-Fehler `-32602` mit Feldpfad.
+- Lesende Werkzeuge liefern keine Antwort über 900 000 Byte; darüber kommt `response_too_large` mit den Eingrenzungsargumenten des Werkzeugs (`sampleRows: 0`, `includeLineItems: false`, `section`).
 
 ## YAML-Grundstruktur
 
@@ -321,7 +436,7 @@ orderReference:
 
 ## Positionsdaten
 
-Das Tool unterstützt zwei CSV-Strukturen.
+Das Tool unterstützt zwei CSV-Strukturen. Alle Positionsfelder sind `FieldMapping`-Einträge; neben den Beispielen unten gibt es `sellerAssignedId` (Artikelnummer des Verkäufers, BT-155) und `buyerAssignedId` (Artikelnummer des Käufers, BT-156).
 
 ### Modus `rows`
 
@@ -417,9 +532,26 @@ lineItems:
 
 Im `columns`-Modus kann ein Feld entweder als nummeriertes Positionsfeld gelesen werden, zum Beispiel `PRODUCT_NAME_0`, oder als globale Einzelspalte, zum Beispiel `INVOICE_TAX`.
 
+Bei `style: "prefix"` steht der Index vor dem Feldnamen; `prefix` ist der Text vor dem Index, `separator` trennt Index und Feldname: `prefix: "Pos"`, `separator: "_"` und `startIndex: 1` ergeben `Pos1_Artikel`, `Pos2_Artikel` usw. (Beispiel: `testdata/config_columns_prefix.yml`). Bei `style: "suffix"` wird `prefix` nicht verwendet; `zeroPadding: 3` erzeugt `Artikel_001`.
+
 `PRODUCT_CODE` ist hier eine positionsbezogene Verkäufer-Artikelnummer und wird deshalb als `sellerAssignedId` gemappt. Es sollte nicht als `description` verwendet werden.
 
 `discountPercent` akzeptiert Werte wie `10`, `10.00` oder `10%`. Der Rabatt wird als rabattierter Netto-Einzelpreis geschrieben. Ein Listenpreis bleibt optional als `GrossPriceProductTradePrice` erhalten; es wird kein `AppliedTradeAllowanceCharge` für Positionsrabatte erzeugt.
+
+### Wirkung je Modus, Auflösung und Rückfälle
+
+Jedes Mapping-Feld wird in der Reihenfolge `value`, `column`, `rules`, `default` aufgelöst; der erste nicht leere Treffer gewinnt. Einige Schlüssel wirken nur in einer Betriebsart:
+
+| Schlüssel | Wirkt nur bei |
+|---|---|
+| `lineItems.columnPattern`, `lineItems.fixedFields` | `lineItems.mode: columns` |
+| `lineItems.fields.unitCode`, `taxType`, `taxCategoryCode`, `lineItems.allowanceCharge` | `lineItems.mode: rows` (im columns-Modus gelten `fixedFields`) |
+| `totals.lineTotalAmount` … `totals.totalPrepaidAmount` | `totals.mode: manual` |
+| `paymentMeans.directDebit` | `typeCode` 59 oder 49 |
+
+Zwei Schlüssel werden aus Kompatibilitätsgründen akzeptiert, haben aber **keine Wirkung**: `lineItems.columnsFields` (Positionsfelder gehören nach `lineItems.fields`) und `lineItems.fields.discountReason` (ein Rabattgrund wird nur im rows-Modus über `lineItems.allowanceCharge.reason` geschrieben). Die CLI protokolliert ihre Verwendung als Warnung, `csv2zugferd_config_get` meldet sie als `config_field_ignored`.
+
+Unbekannte Werte brechen die Verarbeitung nicht ab, sondern fallen mit Warnung zurück: `zugferd.version` → `2.3`, `zugferd.profile` → `Extended`, `zugferd.format` → `CII`, `lineItems.mode` → `rows`, `columnPattern.style` → `suffix`, `totals.mode` → `manual`, Währung → `EUR`, Land → `DE`, Einheit → `C62`, Steuerart → `VAT`, Steuerkategorie → `S`, Steuernummernschema → `VA`, `electronicAddress.scheme` → `GermanyVatNumber`. Ein unbekannter `invoice.typeCode` oder `paymentMeans.typeCode` ist dagegen ein Fehler. Unbekannte YAML-Schlüssel (Tippfehler) werden beim Laden ignoriert; `csv2zugferd_config_get` listet sie unter `unknownKeys`. Der Spaltenabgleich von `csv2zugferd_config_get` ist strukturell: Er vergleicht konfigurierte Spaltennamen (im columns-Modus einschließlich der indexierten Namen) mit dem CSV-Kopf, liest aber keine Zellwerte; ob ein Wert leer ist oder eine Regel greift, zeigt erst `csv2zugferd_invoice_get`.
 
 ## Summen
 

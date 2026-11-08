@@ -1,5 +1,4 @@
 ﻿using System.Globalization;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Csv2Zugferd.Models;
 using s2industries.ZUGFeRD;
@@ -10,91 +9,184 @@ namespace Csv2Zugferd;
 public static class InvoiceMapper
 {
     public static InvoiceDescriptor Map(List<Dictionary<string, string>> rows, AppConfig config)
+        => Map(rows, config, null);
+
+    /// <summary>
+    /// Mapping der CSV-Zeilen auf den InvoiceDescriptor. <paramref name="diagnostics"/> sammelt optional alle
+    /// strukturierten Befunde (Warnungen, Rückfälle, ignorierte Felder); die bisherigen Logtexte bleiben erhalten.
+    /// </summary>
+    public static InvoiceDescriptor Map(List<Dictionary<string, string>> rows, AppConfig config, ICollection<MappingDiagnostic>? diagnostics)
     {
+        var ctx = new MappingContext(config.Csv, diagnostics);
         var mapping = config.Mapping;
         var csvConfig = config.Csv;
         var firstRow = rows[0];
 
-        var invoiceNo = Resolve(mapping.Invoice?.InvoiceNumber, firstRow);
-        var invoiceDateStr = Resolve(mapping.Invoice?.InvoiceDate, firstRow);
-        var currency = ResolveCurrency(Resolve(mapping.Invoice?.Currency, firstRow));
-        var orderRefId = Resolve(mapping.Invoice?.OrderReferenceId, firstRow);
+        ReportIgnoredFields(ctx, mapping);
 
-        var invoiceDate = ParseDate(invoiceDateStr, csvConfig.DateFormat);
+        var invoiceNo = ctx.Resolve(mapping.Invoice?.InvoiceNumber, firstRow, "mapping.invoice.invoiceNumber");
+        var invoiceDateStr = ctx.Resolve(mapping.Invoice?.InvoiceDate, firstRow, "mapping.invoice.invoiceDate");
+        var currency = ctx.ParseCurrency(ctx.Resolve(mapping.Invoice?.Currency, firstRow, "mapping.invoice.currency"), "mapping.invoice.currency");
+        var orderRefId = ctx.Resolve(mapping.Invoice?.OrderReferenceId, firstRow, "mapping.invoice.orderReferenceId");
+
+        var invoiceDate = ctx.ParseDate(invoiceDateStr, "mapping.invoice.invoiceDate");
         var desc = InvoiceDescriptor.CreateInvoice(invoiceNo, invoiceDate, currency, orderRefId);
         Log.Debug("Invoice erstellt: Nr={InvoiceNo}, Datum={InvoiceDate}, Währung={Currency}", invoiceNo, invoiceDate, currency);
 
-        var typeCodeStr = Resolve(mapping.Invoice?.TypeCode, firstRow);
+        var typeCodeStr = ctx.Resolve(mapping.Invoice?.TypeCode, firstRow, "mapping.invoice.typeCode");
         if (!string.IsNullOrEmpty(typeCodeStr))
         {
             desc.Type = ParseInvoiceType(typeCodeStr);
-            Log.Debug("Rechnungstyp (BT-3): {InvoiceType} = {Code}", desc.Type, GetInvoiceTypeCode(desc.Type));
+            Log.Debug("Rechnungstyp (BT-3): {InvoiceType} = {Code}", desc.Type, ConfigValues.GetInvoiceTypeCode(desc.Type));
         }
 
-        var name = Resolve(mapping.Invoice?.Name, firstRow);
+        var name = ctx.Resolve(mapping.Invoice?.Name, firstRow, "mapping.invoice.name");
         if (!string.IsNullOrEmpty(name))
             desc.Name = name;
 
-        var refOrderNo = Resolve(mapping.Invoice?.ReferenceOrderNo, firstRow);
+        var refOrderNo = ctx.Resolve(mapping.Invoice?.ReferenceOrderNo, firstRow, "mapping.invoice.referenceOrderNo");
         if (!string.IsNullOrEmpty(refOrderNo))
             desc.ReferenceOrderNo = refOrderNo;
 
-        var note = Resolve(mapping.Invoice?.Note, firstRow);
+        var note = ctx.Resolve(mapping.Invoice?.Note, firstRow, "mapping.invoice.note");
         if (!string.IsNullOrEmpty(note))
             desc.AddNote(note);
 
-        MapPrecedingInvoices(desc, mapping.Invoice?.PrecedingInvoices, firstRow, csvConfig.DateFormat);
+        MapPrecedingInvoices(ctx, desc, mapping.Invoice?.PrecedingInvoices, firstRow);
 
-        MapBuyer(desc, mapping.Buyer, firstRow);
-        MapSeller(desc, mapping.Seller, firstRow);
-        MapDelivery(desc, mapping.Delivery, firstRow, csvConfig.DateFormat);
-        MapOrderReference(desc, mapping.OrderReference, firstRow, csvConfig.DateFormat);
+        MapBuyer(ctx, desc, mapping.Buyer, firstRow);
+        MapSeller(ctx, desc, mapping.Seller, firstRow);
+        MapDelivery(ctx, desc, mapping.Delivery, firstRow);
+        MapOrderReference(ctx, desc, mapping.OrderReference, firstRow);
 
         var lineItems = mapping.LineItems;
         if (lineItems != null)
         {
-            if (lineItems.Mode.Equals("columns", StringComparison.OrdinalIgnoreCase))
-                MapLineItemsColumns(desc, lineItems, firstRow, csvConfig);
+            if (ConfigValues.ParseLineItemsMode(lineItems.Mode) == ConfigValues.LineItemsModeColumns)
+                MapLineItemsColumns(ctx, desc, lineItems, firstRow, csvConfig);
             else
-                MapLineItemsRows(desc, lineItems, rows, csvConfig);
+                MapLineItemsRows(ctx, desc, lineItems, rows, csvConfig);
         }
 
-        MapTotals(desc, mapping.Totals, firstRow, csvConfig);
-        MapPaymentTerms(desc, mapping.PaymentTerms, firstRow, csvConfig.DateFormat);
-        MapPaymentMeans(desc, mapping.PaymentMeans, firstRow);
+        MapTotals(ctx, desc, mapping.Totals, firstRow, csvConfig);
+        MapPaymentTerms(ctx, desc, mapping.PaymentTerms, firstRow);
+        MapPaymentMeans(ctx, desc, mapping.PaymentMeans, firstRow);
 
-        foreach (var warning in CheckDocument(desc, config.Zugferd.Profile).Concat(CheckPaymentMeans(desc, config.Zugferd.Profile)))
-            Log.Warning("{Warning}", warning);
+        foreach (var diagnostic in CheckDocumentDiagnostics(desc, config.Zugferd.Profile).Concat(CheckPaymentMeansDiagnostics(desc, config.Zugferd.Profile)))
+        {
+            Log.Warning("{Warning}", diagnostic.Message);
+            ctx.Add(diagnostic);
+        }
 
         return desc;
     }
 
-    private static void MapPrecedingInvoices(InvoiceDescriptor desc, List<PrecedingInvoiceMapping>? precedingInvoices, Dictionary<string, string> row, string dateFormat)
+    /// <summary>
+    /// Strukturelle Pruefung einer Konfiguration ohne Daten: ignorierte und fehlende Abschnitte, unbekannte Modi.
+    /// Dieselbe Pruefung laeuft zu Beginn jedes Mappings; hier fuer den MCP-Konfigurationscheck ohne CSV.
+    /// </summary>
+    public static IReadOnlyList<MappingDiagnostic> CheckConfiguration(AppConfig config)
+    {
+        var diagnostics = new List<MappingDiagnostic>();
+        ReportIgnoredFields(new MappingContext(config.Csv, diagnostics), config.Mapping);
+        return diagnostics;
+    }
+
+    /// <summary>Meldet konfigurierte Felder, die in der gewählten Betriebsart oder grundsätzlich keine Wirkung haben.</summary>
+    private static void ReportIgnoredFields(MappingContext ctx, MappingConfig mapping)
+    {
+        var lineItems = mapping.LineItems;
+        if (lineItems != null)
+        {
+            if (lineItems.ColumnsFields is { Count: > 0 })
+                ctx.Ignored("mapping.lineItems.columnsFields", "wird vom Mapper nie gelesen; Positionsfelder gehören nach lineItems.fields");
+            if (lineItems.Fields?.DiscountReason != null)
+                ctx.Ignored("mapping.lineItems.fields.discountReason", "hat keine Ausgabewirkung; ein Rabattgrund wird im rows-Modus über lineItems.allowanceCharge.reason geschrieben");
+
+            var mode = ConfigValues.ParseLineItemsMode(lineItems.Mode);
+            if (!ConfigValues.LineItemsMode.IsKnown(lineItems.Mode))
+                ctx.Fallback("mapping.lineItems.mode", lineItems.Mode, ConfigValues.LineItemsMode);
+
+            if (mode == ConfigValues.LineItemsModeRows)
+            {
+                if (lineItems.Fields == null)
+                    ctx.Missing("mapping.lineItems.fields", "im rows-Modus entstehen ohne lineItems.fields keine Positionen");
+                if (lineItems.ColumnPattern != null)
+                    ctx.Ignored("mapping.lineItems.columnPattern", "wirkt nur im columns-Modus");
+                if (lineItems.FixedFields is { Count: > 0 })
+                    ctx.Ignored("mapping.lineItems.fixedFields", "wirkt nur im columns-Modus; im rows-Modus gelten lineItems.fields.unitCode, taxType und taxCategoryCode");
+            }
+            else
+            {
+                if (lineItems.ColumnPattern == null)
+                    ctx.Missing("mapping.lineItems.columnPattern", "im columns-Modus entstehen ohne lineItems.columnPattern keine Positionen");
+                if (lineItems.AllowanceCharge != null)
+                    ctx.Ignored("mapping.lineItems.allowanceCharge", "wirkt nur im rows-Modus; im columns-Modus Rabatte über lineItems.fields.discountPercent");
+                if (lineItems.Fields?.UnitCode != null)
+                    ctx.Ignored("mapping.lineItems.fields.unitCode", "wirkt nur im rows-Modus; im columns-Modus gilt lineItems.fixedFields.unitCode");
+                if (lineItems.Fields?.TaxType != null)
+                    ctx.Ignored("mapping.lineItems.fields.taxType", "wirkt nur im rows-Modus; im columns-Modus gilt lineItems.fixedFields.taxType");
+                if (lineItems.Fields?.TaxCategoryCode != null)
+                    ctx.Ignored("mapping.lineItems.fields.taxCategoryCode", "wirkt nur im rows-Modus; im columns-Modus gilt lineItems.fixedFields.taxCategoryCode");
+                if (lineItems.ColumnPattern != null && !ConfigValues.ColumnStyle.IsKnown(lineItems.ColumnPattern.Style))
+                    ctx.Fallback("mapping.lineItems.columnPattern.style", lineItems.ColumnPattern.Style, ConfigValues.ColumnStyle);
+                if (lineItems.FixedFields != null)
+                {
+                    foreach (var key in lineItems.FixedFields.Keys.Where(k => !YamlConfigLoader.EffectiveFixedFieldKeys.Contains(k, StringComparer.Ordinal)))
+                        ctx.Ignored($"mapping.lineItems.fixedFields.{key}", "unbekannter Schlüssel; wirksam sind nur unitCode, taxType und taxCategoryCode");
+                }
+            }
+        }
+
+        var totals = mapping.Totals;
+        if (totals != null)
+        {
+            if (!ConfigValues.TotalsMode.IsKnown(totals.Mode))
+                ctx.Fallback("mapping.totals.mode", totals.Mode, ConfigValues.TotalsMode);
+            if (ConfigValues.ParseTotalsMode(totals.Mode) == ConfigValues.TotalsModeAuto)
+            {
+                foreach (var (fieldName, field) in new (string, FieldMapping?)[]
+                {
+                    ("lineTotalAmount", totals.LineTotalAmount), ("allowanceTotalAmount", totals.AllowanceTotalAmount),
+                    ("taxBasisAmount", totals.TaxBasisAmount), ("taxTotalAmount", totals.TaxTotalAmount),
+                    ("grandTotalAmount", totals.GrandTotalAmount), ("totalPrepaidAmount", totals.TotalPrepaidAmount),
+                })
+                {
+                    if (field != null)
+                        ctx.Ignored($"mapping.totals.{fieldName}", "wirkt nur bei totals.mode manual");
+                }
+            }
+        }
+    }
+
+    private static void MapPrecedingInvoices(MappingContext ctx, InvoiceDescriptor desc, List<PrecedingInvoiceMapping>? precedingInvoices, Dictionary<string, string> row)
     {
         if (precedingInvoices == null) return;
 
-        foreach (var reference in precedingInvoices)
+        for (var i = 0; i < precedingInvoices.Count; i++)
         {
-            var number = Resolve(reference.Number, row);
+            var reference = precedingInvoices[i];
+            var path = $"mapping.invoice.precedingInvoices[{i}]";
+            var number = ctx.Resolve(reference.Number, row, path + ".number");
             if (string.IsNullOrEmpty(number)) continue;
 
-            var dateStr = Resolve(reference.Date, row);
-            var date = !string.IsNullOrEmpty(dateStr) ? ParseDate(dateStr, dateFormat) : (DateTime?)null;
+            var dateStr = ctx.Resolve(reference.Date, row, path + ".date");
+            var date = !string.IsNullOrEmpty(dateStr) ? ctx.ParseDate(dateStr, path + ".date") : (DateTime?)null;
             desc.AddInvoiceReferencedDocument(number, date, null);
             Log.Debug("Vorgängerrechnung (BT-25): {Number}, Datum={Date}", number, date);
         }
     }
 
-    private static void MapBuyer(InvoiceDescriptor desc, BuyerMapping? buyer, Dictionary<string, string> row)
+    private static void MapBuyer(MappingContext ctx, InvoiceDescriptor desc, BuyerMapping? buyer, Dictionary<string, string> row)
     {
         if (buyer == null) return;
 
-        var name = Resolve(buyer.Name, row);
-        var postalCode = Resolve(buyer.PostalCode, row);
-        var city = Resolve(buyer.City, row);
-        var street = Resolve(buyer.Street, row);
-        var country = ResolveCountry(Resolve(buyer.Country, row));
-        var id = NullIfEmpty(Resolve(buyer.Id, row));
+        var name = ctx.Resolve(buyer.Name, row, "mapping.buyer.name");
+        var postalCode = ctx.Resolve(buyer.PostalCode, row, "mapping.buyer.postalCode");
+        var city = ctx.Resolve(buyer.City, row, "mapping.buyer.city");
+        var street = ctx.Resolve(buyer.Street, row, "mapping.buyer.street");
+        var country = ctx.ParseCountry(ctx.Resolve(buyer.Country, row, "mapping.buyer.country"), "mapping.buyer.country");
+        var id = NullIfEmpty(ctx.Resolve(buyer.Id, row, "mapping.buyer.id"));
 
         if (!string.IsNullOrEmpty(name))
         {
@@ -102,33 +194,33 @@ public static class InvoiceMapper
             Log.Debug("Käufer: {Name}, {PostalCode} {City}, {Country}, {ID}", name, postalCode, city, country, id);
         }
 
-        var taxId = Resolve(buyer.TaxId, row);
-        var taxScheme = Resolve(buyer.TaxScheme, row);
+        var taxId = ctx.Resolve(buyer.TaxId, row, "mapping.buyer.taxId");
+        var taxScheme = ctx.Resolve(buyer.TaxScheme, row, "mapping.buyer.taxScheme");
         if (!string.IsNullOrEmpty(taxId))
-            desc.AddBuyerTaxRegistration(taxId, ParseTaxScheme(taxScheme));
+            desc.AddBuyerTaxRegistration(taxId, ctx.ParseTaxScheme(taxScheme, "mapping.buyer.taxScheme"));
 
-        var contact = Resolve(buyer.Contact, row);
+        var contact = ctx.Resolve(buyer.Contact, row, "mapping.buyer.contact");
         if (!string.IsNullOrEmpty(contact))
             desc.SetBuyerContact(contact);
 
-        var eAddr = Resolve(buyer.ElectronicAddress, row);
+        var eAddr = ctx.Resolve(buyer.ElectronicAddress, row, "mapping.buyer.electronicAddress");
         if (!string.IsNullOrEmpty(eAddr))
         {
-            var scheme = ParseElectronicAddressScheme(buyer.ElectronicAddress?.Scheme);
+            var scheme = ctx.ParseElectronicAddressScheme(buyer.ElectronicAddress?.Scheme, "mapping.buyer.electronicAddress.scheme");
             desc.SetBuyerElectronicAddress(eAddr, scheme);
         }
     }
 
-    private static void MapSeller(InvoiceDescriptor desc, SellerMapping? seller, Dictionary<string, string> row)
+    private static void MapSeller(MappingContext ctx, InvoiceDescriptor desc, SellerMapping? seller, Dictionary<string, string> row)
     {
         if (seller == null) return;
 
-        var name = Resolve(seller.Name, row);
-        var postalCode = Resolve(seller.PostalCode, row);
-        var city = Resolve(seller.City, row);
-        var street = Resolve(seller.Street, row);
-        var country = ResolveCountry(Resolve(seller.Country, row));
-        var id = NullIfEmpty(Resolve(seller.Id, row));
+        var name = ctx.Resolve(seller.Name, row, "mapping.seller.name");
+        var postalCode = ctx.Resolve(seller.PostalCode, row, "mapping.seller.postalCode");
+        var city = ctx.Resolve(seller.City, row, "mapping.seller.city");
+        var street = ctx.Resolve(seller.Street, row, "mapping.seller.street");
+        var country = ctx.ParseCountry(ctx.Resolve(seller.Country, row, "mapping.seller.country"), "mapping.seller.country");
+        var id = NullIfEmpty(ctx.Resolve(seller.Id, row, "mapping.seller.id"));
 
         if (!string.IsNullOrEmpty(name))
         {
@@ -138,39 +230,40 @@ public static class InvoiceMapper
 
         if (seller.TaxRegistrations != null)
         {
-            foreach (var reg in seller.TaxRegistrations)
+            for (var i = 0; i < seller.TaxRegistrations.Count; i++)
             {
+                var reg = seller.TaxRegistrations[i];
                 var taxId = !string.IsNullOrEmpty(reg.Value)
                     ? reg.Value
                     : row.GetValueOrDefault(reg.Column ?? "") ?? "";
                 if (!string.IsNullOrEmpty(taxId))
-                    desc.AddSellerTaxRegistration(taxId, ParseTaxScheme(reg.Scheme));
+                    desc.AddSellerTaxRegistration(taxId, ctx.ParseTaxScheme(reg.Scheme, $"mapping.seller.taxRegistrations[{i}].scheme"));
             }
         }
 
-        var eAddr = Resolve(seller.ElectronicAddress, row);
+        var eAddr = ctx.Resolve(seller.ElectronicAddress, row, "mapping.seller.electronicAddress");
         if (!string.IsNullOrEmpty(eAddr))
         {
-            var scheme = ParseElectronicAddressScheme(seller.ElectronicAddress?.Scheme);
+            var scheme = ctx.ParseElectronicAddressScheme(seller.ElectronicAddress?.Scheme, "mapping.seller.electronicAddress.scheme");
             desc.SetSellerElectronicAddress(eAddr, scheme);
         }
     }
 
-    private static void MapDelivery(InvoiceDescriptor desc, DeliveryMapping? delivery, Dictionary<string, string> row, string dateFormat)
+    private static void MapDelivery(MappingContext ctx, InvoiceDescriptor desc, DeliveryMapping? delivery, Dictionary<string, string> row)
     {
         if (delivery != null)
         {
-            var noteNo = Resolve(delivery.DeliveryNoteNumber, row);
-            var noteDateStr = Resolve(delivery.DeliveryNoteDate, row);
+            var noteNo = ctx.Resolve(delivery.DeliveryNoteNumber, row, "mapping.delivery.deliveryNoteNumber");
+            var noteDateStr = ctx.Resolve(delivery.DeliveryNoteDate, row, "mapping.delivery.deliveryNoteDate");
             if (!string.IsNullOrEmpty(noteNo))
             {
-                var noteDate = !string.IsNullOrEmpty(noteDateStr) ? ParseDate(noteDateStr, dateFormat) : (DateTime?)null;
+                var noteDate = !string.IsNullOrEmpty(noteDateStr) ? ctx.ParseDate(noteDateStr, "mapping.delivery.deliveryNoteDate") : (DateTime?)null;
                 desc.SetDeliveryNoteReferenceDocument(noteNo, noteDate);
             }
 
-            var actualDateStr = Resolve(delivery.ActualDeliveryDate, row);
+            var actualDateStr = ctx.Resolve(delivery.ActualDeliveryDate, row, "mapping.delivery.actualDeliveryDate");
             if (!string.IsNullOrEmpty(actualDateStr))
-                desc.ActualDeliveryDate = ParseDate(actualDateStr, dateFormat);
+                desc.ActualDeliveryDate = ctx.ParseDate(actualDateStr, "mapping.delivery.actualDeliveryDate");
         }
 
         // ApplicableHeaderTradeDelivery ist im CII-Schema Pflicht (1..1). Die Bibliothek lässt leere Elemente weg,
@@ -180,42 +273,47 @@ public static class InvoiceMapper
             desc.ActualDeliveryDate = desc.InvoiceDate;
             Log.Warning("Keine Lieferdaten konfiguriert: Rechnungsdatum {InvoiceDate:yyyy-MM-dd} wird als Leistungsdatum (BT-72) verwendet",
                 desc.InvoiceDate);
+            ctx.Add(new MappingDiagnostic(DiagnosticCodes.DeliveryDateDefaulted, "mapping.delivery",
+                $"Keine Lieferdaten konfiguriert: Rechnungsdatum {desc.InvoiceDate:yyyy-MM-dd} wird als Leistungsdatum (BT-72) verwendet"));
         }
     }
 
-    private static void MapOrderReference(InvoiceDescriptor desc, OrderReferenceMapping? orderRef, Dictionary<string, string> row, string dateFormat)
+    private static void MapOrderReference(MappingContext ctx, InvoiceDescriptor desc, OrderReferenceMapping? orderRef, Dictionary<string, string> row)
     {
         if (orderRef == null) return;
 
-        var orderNo = Resolve(orderRef.OrderNumber, row);
-        var orderDateStr = Resolve(orderRef.OrderDate, row);
+        var orderNo = ctx.Resolve(orderRef.OrderNumber, row, "mapping.orderReference.orderNumber");
+        var orderDateStr = ctx.Resolve(orderRef.OrderDate, row, "mapping.orderReference.orderDate");
         if (!string.IsNullOrEmpty(orderNo))
         {
-            var orderDate = !string.IsNullOrEmpty(orderDateStr) ? ParseDate(orderDateStr, dateFormat) : (DateTime?)null;
+            var orderDate = !string.IsNullOrEmpty(orderDateStr) ? ctx.ParseDate(orderDateStr, "mapping.orderReference.orderDate") : (DateTime?)null;
             desc.SetBuyerOrderReferenceDocument(orderNo, orderDate);
         }
     }
 
-    private static void MapLineItemsRows(InvoiceDescriptor desc, LineItemsMapping lineItems, List<Dictionary<string, string>> rows, CsvConfig csvConfig)
+    private static void MapLineItemsRows(MappingContext ctx, InvoiceDescriptor desc, LineItemsMapping lineItems, List<Dictionary<string, string>> rows, CsvConfig csvConfig)
     {
         var fields = lineItems.Fields;
         if (fields == null) return;
 
-        foreach (var row in rows)
+        const string p = "mapping.lineItems.fields.";
+        for (var rowIndex = 0; rowIndex < rows.Count; rowIndex++)
         {
-            var name = Resolve(fields.Name, row);
+            var row = rows[rowIndex];
+            var where = $"Zeile {rowIndex + 1}";
+            var name = ctx.Resolve(fields.Name, row, p + "name");
             if (string.IsNullOrEmpty(name)) continue;
 
-            var netPrice = ParseDecimal(Resolve(fields.NetUnitPrice, row), csvConfig.DecimalSeparator);
-            var quantity = ParseDecimal(Resolve(fields.BilledQuantity, row), csvConfig.DecimalSeparator);
-            var unitCode = ParseUnitCode(Resolve(fields.UnitCode, row));
-            var description = NullIfEmpty(Resolve(fields.Description, row));
-            var sellerAssignedId = NullIfEmpty(Resolve(fields.SellerAssignedId, row));
-            var buyerAssignedId = NullIfEmpty(Resolve(fields.BuyerAssignedId, row));
-            var taxPercent = ParseDecimal(Resolve(fields.TaxPercent, row), csvConfig.DecimalSeparator);
-            var taxType = ParseTaxType(Resolve(fields.TaxType, row));
-            var categoryCode = ParseTaxCategory(Resolve(fields.TaxCategoryCode, row));
-            var discountPercent = GetDiscountPercent(fields.DiscountPercent, row, csvConfig);
+            var netPrice = ctx.ParseDecimal(ctx.Resolve(fields.NetUnitPrice, row, p + "netUnitPrice"), p + "netUnitPrice", where);
+            var quantity = ctx.ParseDecimal(ctx.Resolve(fields.BilledQuantity, row, p + "billedQuantity"), p + "billedQuantity", where);
+            var unitCode = ctx.ParseUnitCode(ctx.Resolve(fields.UnitCode, row, p + "unitCode"), p + "unitCode", where);
+            var description = NullIfEmpty(ctx.Resolve(fields.Description, row, p + "description"));
+            var sellerAssignedId = NullIfEmpty(ctx.Resolve(fields.SellerAssignedId, row, p + "sellerAssignedId"));
+            var buyerAssignedId = NullIfEmpty(ctx.Resolve(fields.BuyerAssignedId, row, p + "buyerAssignedId"));
+            var taxPercent = ctx.ParseDecimal(ctx.Resolve(fields.TaxPercent, row, p + "taxPercent"), p + "taxPercent", where);
+            var taxType = ctx.ParseTaxType(ctx.Resolve(fields.TaxType, row, p + "taxType"), p + "taxType", where);
+            var categoryCode = ctx.ParseTaxCategory(ctx.Resolve(fields.TaxCategoryCode, row, p + "taxCategoryCode"), p + "taxCategoryCode", where);
+            var discountPercent = ctx.ParseDecimal(ctx.Resolve(fields.DiscountPercent, row, p + "discountPercent"), p + "discountPercent", where);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
             var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
@@ -246,23 +344,22 @@ public static class InvoiceMapper
                 unitCode,
                 taxType,
                 categoryCode);
-            MapAllowanceCharge(item, lineItems.AllowanceCharge, row, csvConfig, lineTotal);
+            MapAllowanceCharge(ctx, item, lineItems.AllowanceCharge, row, lineTotal, where);
         }
     }
 
-    private static void MapLineItemsColumns(InvoiceDescriptor desc, LineItemsMapping lineItems, Dictionary<string, string> row, CsvConfig csvConfig)
+    private static void MapLineItemsColumns(MappingContext ctx, InvoiceDescriptor desc, LineItemsMapping lineItems, Dictionary<string, string> row, CsvConfig csvConfig)
     {
         var pattern = lineItems.ColumnPattern;
         if (pattern == null) return;
 
         var fields = lineItems.Fields;
-        var nameFragment = fields?.Name?.Column ?? "Artikel";
-        var descFragment = fields?.Description?.Column ?? "Beschreibung";
-        var priceFragment = fields?.NetUnitPrice?.Column ?? "Einzelpreis";
-        var qtyFragment = fields?.BilledQuantity?.Column ?? "Menge";
+        var nameFragment = fields?.Name?.Column ?? ColumnResolver.DefaultNameFragment;
+        var descFragment = fields?.Description?.Column ?? ColumnResolver.DefaultDescriptionFragment;
+        var priceFragment = fields?.NetUnitPrice?.Column ?? ColumnResolver.DefaultPriceFragment;
+        var qtyFragment = fields?.BilledQuantity?.Column ?? ColumnResolver.DefaultQuantityFragment;
         var taxFragment = fields?.TaxPercent?.Column;
         var discountFragment = fields?.DiscountPercent?.Column;
-        var discountReasonFragment = fields?.DiscountReason?.Column;
         var sellerAssignedIdFragment = fields?.SellerAssignedId?.Column;
         var buyerAssignedIdFragment = fields?.BuyerAssignedId?.Column;
 
@@ -275,20 +372,15 @@ public static class InvoiceMapper
         var fixedTaxType = lineItems.FixedFields?.GetValueOrDefault("taxType");
         var fixedTaxCategory = lineItems.FixedFields?.GetValueOrDefault("taxCategoryCode");
 
+        const string p = "mapping.lineItems.fields.";
+        const string f = "mapping.lineItems.fixedFields.";
         for (int i = pattern.StartIndex; ; i++)
         {
-            var idx = pattern.ZeroPadding > 0
-                ? i.ToString().PadLeft(pattern.ZeroPadding, '0')
-                : i.ToString();
+            var where = $"Position {i}";
 
-            string BuildColumnName(string fieldFragment)
-            {
-                return pattern.Style.Equals("prefix", StringComparison.OrdinalIgnoreCase)
-                    ? $"{pattern.Prefix}{idx}{pattern.Separator}{fieldFragment}"
-                    : $"{fieldFragment}{pattern.Separator}{idx}";
-            }
+            string BuildColumnName(string fieldFragment) => ColumnResolver.BuildColumnName(pattern, i, fieldFragment);
 
-            string ResolveColumnValue(FieldMapping? fieldMapping, string? defaultFragment = null)
+            string ResolveColumnValue(FieldMapping? fieldMapping, string path, string? defaultFragment = null)
             {
                 if (!string.IsNullOrEmpty(fieldMapping?.Value))
                     return fieldMapping.Value;
@@ -304,7 +396,7 @@ public static class InvoiceMapper
                         return indexedValue;
                 }
 
-                var ruleValue = ResolveRule(fieldMapping, ResolveColumnName);
+                var ruleValue = ctx.ResolveRule(fieldMapping, ResolveColumnName, path);
                 if (!string.IsNullOrEmpty(ruleValue))
                     return ruleValue;
 
@@ -333,23 +425,23 @@ public static class InvoiceMapper
                 break;
             }
 
-            var descVal = ResolveColumnValue(fields?.Description, descFragment);
-            var netPrice = ParseDecimal(ResolveColumnValue(fields?.NetUnitPrice, priceFragment), csvConfig.DecimalSeparator);
-            var quantity = ParseDecimal(ResolveColumnValue(fields?.BilledQuantity, qtyFragment), csvConfig.DecimalSeparator);
-            var taxPercent = ParseDecimal(ResolveColumnValue(fields?.TaxPercent, taxFragment), csvConfig.DecimalSeparator);
-            var sellerAssignedId = NullIfEmpty(ResolveColumnValue(fields?.SellerAssignedId, sellerAssignedIdFragment));
-            var buyerAssignedId = NullIfEmpty(ResolveColumnValue(fields?.BuyerAssignedId, buyerAssignedIdFragment));
-            var discountPercent = ParseDecimal(ResolveColumnValue(fields?.DiscountPercent, discountFragment), csvConfig.DecimalSeparator);
+            var descVal = ResolveColumnValue(fields?.Description, p + "description", descFragment);
+            var netPrice = ctx.ParseDecimal(ResolveColumnValue(fields?.NetUnitPrice, p + "netUnitPrice", priceFragment), p + "netUnitPrice", where);
+            var quantity = ctx.ParseDecimal(ResolveColumnValue(fields?.BilledQuantity, p + "billedQuantity", qtyFragment), p + "billedQuantity", where);
+            var taxPercent = ctx.ParseDecimal(ResolveColumnValue(fields?.TaxPercent, p + "taxPercent", taxFragment), p + "taxPercent", where);
+            var sellerAssignedId = NullIfEmpty(ResolveColumnValue(fields?.SellerAssignedId, p + "sellerAssignedId", sellerAssignedIdFragment));
+            var buyerAssignedId = NullIfEmpty(ResolveColumnValue(fields?.BuyerAssignedId, p + "buyerAssignedId", buyerAssignedIdFragment));
+            var discountPercent = ctx.ParseDecimal(ResolveColumnValue(fields?.DiscountPercent, p + "discountPercent", discountFragment), p + "discountPercent", where);
             var discountedNetPrice = ApplyDiscount(netPrice, discountPercent);
             var grossUnitPrice = discountPercent > 0 ? netPrice : (decimal?)null;
             var lineTotal = CalculateLineTotal(discountedNetPrice, quantity);
 
-            var unitCodeValue = ResolveColumnValue(fixedUnitCode);
-            var taxTypeValue = ResolveColumnValue(fixedTaxType);
-            var taxCategoryValue = ResolveColumnValue(fixedTaxCategory);
-            var unitCode = ParseUnitCode(!string.IsNullOrEmpty(unitCodeValue) ? unitCodeValue : "C62");
-            var taxType = ParseTaxType(!string.IsNullOrEmpty(taxTypeValue) ? taxTypeValue : "VAT");
-            var categoryCode = ParseTaxCategory(!string.IsNullOrEmpty(taxCategoryValue) ? taxCategoryValue : "S");
+            var unitCodeValue = ResolveColumnValue(fixedUnitCode, f + "unitCode");
+            var taxTypeValue = ResolveColumnValue(fixedTaxType, f + "taxType");
+            var taxCategoryValue = ResolveColumnValue(fixedTaxCategory, f + "taxCategoryCode");
+            var unitCode = ctx.ParseUnitCode(!string.IsNullOrEmpty(unitCodeValue) ? unitCodeValue : "C62", f + "unitCode", where);
+            var taxType = ctx.ParseTaxType(!string.IsNullOrEmpty(taxTypeValue) ? taxTypeValue : "VAT", f + "taxType", where);
+            var categoryCode = ctx.ParseTaxCategory(!string.IsNullOrEmpty(taxCategoryValue) ? taxCategoryValue : "S", f + "taxCategoryCode", where);
 
             var item = desc.AddTradeLineItem(
                 name: nameVal,
@@ -381,18 +473,19 @@ public static class InvoiceMapper
         }
     }
 
-    private static void MapAllowanceCharge(TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, CsvConfig csvConfig, decimal basisAmount)
+    private static void MapAllowanceCharge(MappingContext ctx, TradeLineItem item, AllowanceChargeMapping? charge, Dictionary<string, string> row, decimal basisAmount, string where)
     {
         if (charge == null || !charge.Enabled) return;
 
-        var percentStr = Resolve(charge.ChargePercentage, row);
+        const string p = "mapping.lineItems.allowanceCharge.";
+        var percentStr = ctx.Resolve(charge.ChargePercentage, row, p + "chargePercentage");
         if (string.IsNullOrEmpty(percentStr)) return;
 
-        var percent = ParseDecimal(percentStr, csvConfig.DecimalSeparator);
+        var percent = ctx.ParseDecimal(percentStr, p + "chargePercentage", where);
         if (percent <= 0) return;
 
-        var reason = Resolve(charge.Reason, row) ?? "Rabatt";
-        var isDiscount = Resolve(charge.IsDiscount, row)?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
+        var reason = ctx.Resolve(charge.Reason, row, p + "reason") ?? "Rabatt";
+        var isDiscount = ctx.Resolve(charge.IsDiscount, row, p + "isDiscount")?.Equals("true", StringComparison.OrdinalIgnoreCase) ?? true;
 
         var actualAmount = RoundAmount(basisAmount * (percent / 100m));
 
@@ -413,21 +506,22 @@ public static class InvoiceMapper
         }
     }
 
-    private static void MapTotals(InvoiceDescriptor desc, TotalsMapping? totals, Dictionary<string, string> row, CsvConfig csvConfig)
+    private static void MapTotals(MappingContext ctx, InvoiceDescriptor desc, TotalsMapping? totals, Dictionary<string, string> row, CsvConfig csvConfig)
     {
-        if (totals == null || totals.Mode.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        if (totals == null || ConfigValues.ParseTotalsMode(totals.Mode) == ConfigValues.TotalsModeAuto)
         {
             CalculateAutoTotals(desc, csvConfig);
             return;
         }
 
         // Manual mode
-        var lineTotalAmount = ParseDecimal(Resolve(totals.LineTotalAmount, row), csvConfig.DecimalSeparator);
-        var allowanceTotalAmount = ParseDecimal(Resolve(totals.AllowanceTotalAmount, row), csvConfig.DecimalSeparator);
-        var taxBasisAmount = ParseDecimal(Resolve(totals.TaxBasisAmount, row), csvConfig.DecimalSeparator);
-        var taxTotalAmount = ParseDecimal(Resolve(totals.TaxTotalAmount, row), csvConfig.DecimalSeparator);
-        var grandTotalAmount = ParseDecimal(Resolve(totals.GrandTotalAmount, row), csvConfig.DecimalSeparator);
-        var totalPrepaidAmount = ParseDecimal(Resolve(totals.TotalPrepaidAmount, row), csvConfig.DecimalSeparator);
+        const string p = "mapping.totals.";
+        var lineTotalAmount = ctx.ParseDecimal(ctx.Resolve(totals.LineTotalAmount, row, p + "lineTotalAmount"), p + "lineTotalAmount");
+        var allowanceTotalAmount = ctx.ParseDecimal(ctx.Resolve(totals.AllowanceTotalAmount, row, p + "allowanceTotalAmount"), p + "allowanceTotalAmount");
+        var taxBasisAmount = ctx.ParseDecimal(ctx.Resolve(totals.TaxBasisAmount, row, p + "taxBasisAmount"), p + "taxBasisAmount");
+        var taxTotalAmount = ctx.ParseDecimal(ctx.Resolve(totals.TaxTotalAmount, row, p + "taxTotalAmount"), p + "taxTotalAmount");
+        var grandTotalAmount = ctx.ParseDecimal(ctx.Resolve(totals.GrandTotalAmount, row, p + "grandTotalAmount"), p + "grandTotalAmount");
+        var totalPrepaidAmount = ctx.ParseDecimal(ctx.Resolve(totals.TotalPrepaidAmount, row, p + "totalPrepaidAmount"), p + "totalPrepaidAmount");
         var duePayableAmount = grandTotalAmount - totalPrepaidAmount;
 
         AddTaxBreakdownFromLineItems(desc, taxTotalAmount);
@@ -514,58 +608,66 @@ public static class InvoiceMapper
         }
     }
 
-    private static void MapPaymentTerms(InvoiceDescriptor desc, PaymentTermsMapping? payment, Dictionary<string, string> row, string dateFormat)
+    private static void MapPaymentTerms(MappingContext ctx, InvoiceDescriptor desc, PaymentTermsMapping? payment, Dictionary<string, string> row)
     {
         if (payment == null) return;
 
-        var description = Resolve(payment.Description, row);
-        var dueDateStr = Resolve(payment.DueDate, row);
+        var description = ctx.Resolve(payment.Description, row, "mapping.paymentTerms.description");
+        var dueDateStr = ctx.Resolve(payment.DueDate, row, "mapping.paymentTerms.dueDate");
 
         if (!string.IsNullOrEmpty(description))
         {
-            var dueDate = !string.IsNullOrEmpty(dueDateStr) ? ParseDate(dueDateStr, dateFormat) : (DateTime?)null;
+            var dueDate = !string.IsNullOrEmpty(dueDateStr) ? ctx.ParseDate(dueDateStr, "mapping.paymentTerms.dueDate") : (DateTime?)null;
             desc.AddTradePaymentTerms(description, dueDate);
         }
     }
 
-    private static void MapPaymentMeans(InvoiceDescriptor desc, PaymentMeansMapping? paymentMeans, Dictionary<string, string> row)
+    private static void MapPaymentMeans(MappingContext ctx, InvoiceDescriptor desc, PaymentMeansMapping? paymentMeans, Dictionary<string, string> row)
     {
         if (paymentMeans == null) return;
 
-        var typeCodeStr = Resolve(paymentMeans.TypeCode, row);
+        const string p = "mapping.paymentMeans.";
+        var typeCodeStr = ctx.Resolve(paymentMeans.TypeCode, row, p + "typeCode");
         if (string.IsNullOrEmpty(typeCodeStr))
         {
             Log.Warning("paymentMeans ohne typeCode (BT-81) wird ignoriert");
+            ctx.Add(new MappingDiagnostic(DiagnosticCodes.PaymentMeansWithoutTypeCode, p + "typeCode", "paymentMeans ohne typeCode (BT-81) wird ignoriert"));
             return;
         }
 
         var typeCode = ParsePaymentMeansTypeCode(typeCodeStr);
-        var information = NullIfEmpty(Resolve(paymentMeans.Information, row));
+        var information = NullIfEmpty(ctx.Resolve(paymentMeans.Information, row, p + "information"));
         var isDirectDebit = IsDirectDebit(typeCode);
         var directDebit = paymentMeans.DirectDebit;
 
         if (directDebit != null && !isDirectDebit)
+        {
             Log.Warning("paymentMeans.directDebit wird ignoriert, da typeCode {TypeCode} keine Lastschrift ist", typeCode);
+            ctx.Add(new MappingDiagnostic(DiagnosticCodes.DirectDebitIgnored, p + "directDebit",
+                $"paymentMeans.directDebit wird ignoriert, da typeCode {typeCode} keine Lastschrift ist"));
+        }
 
-        var creditorId = isDirectDebit ? NullIfEmpty(NormalizeAccountId(Resolve(directDebit?.CreditorId, row))) : null;
-        var mandateReference = isDirectDebit ? NullIfEmpty(Resolve(directDebit?.MandateReference, row)) : null;
+        var creditorId = isDirectDebit ? NullIfEmpty(NormalizeAccountId(ctx.Resolve(directDebit?.CreditorId, row, p + "directDebit.creditorId"))) : null;
+        var mandateReference = isDirectDebit ? NullIfEmpty(ctx.Resolve(directDebit?.MandateReference, row, p + "directDebit.mandateReference")) : null;
 
         desc.SetPaymentMeans(typeCode, information, creditorId, mandateReference);
         Log.Debug("Zahlungsmittel: {TypeCode}, Gläubiger-ID={CreditorId}, Mandat={Mandate}", typeCode, creditorId, mandateReference);
 
-        var paymentReference = Resolve(paymentMeans.PaymentReference, row);
+        var paymentReference = ctx.Resolve(paymentMeans.PaymentReference, row, p + "paymentReference");
         if (!string.IsNullOrEmpty(paymentReference))
             desc.PaymentReference = paymentReference;
 
         if (paymentMeans.SellerAccounts != null)
         {
-            foreach (var account in paymentMeans.SellerAccounts)
+            for (var i = 0; i < paymentMeans.SellerAccounts.Count; i++)
             {
-                var iban = NormalizeAccountId(Resolve(account.Iban, row));
+                var account = paymentMeans.SellerAccounts[i];
+                var accountPath = $"{p}sellerAccounts[{i}].";
+                var iban = NormalizeAccountId(ctx.Resolve(account.Iban, row, accountPath + "iban"));
                 if (string.IsNullOrEmpty(iban)) continue;
 
-                var bic = NullIfEmpty(NormalizeAccountId(Resolve(account.Bic, row)));
-                var name = NullIfEmpty(Resolve(account.Name, row));
+                var bic = NullIfEmpty(NormalizeAccountId(ctx.Resolve(account.Bic, row, accountPath + "bic")));
+                var name = NullIfEmpty(ctx.Resolve(account.Name, row, accountPath + "name"));
                 desc.AddCreditorFinancialAccount(iban, bic, name: name);
                 Log.Debug("Verkäuferkonto: IBAN={Iban}, BIC={Bic}", iban, bic);
             }
@@ -573,10 +675,10 @@ public static class InvoiceMapper
 
         if (isDirectDebit)
         {
-            var buyerIban = NormalizeAccountId(Resolve(directDebit?.BuyerIban, row));
+            var buyerIban = NormalizeAccountId(ctx.Resolve(directDebit?.BuyerIban, row, p + "directDebit.buyerIban"));
             if (!string.IsNullOrEmpty(buyerIban))
             {
-                var buyerBic = NullIfEmpty(NormalizeAccountId(Resolve(directDebit?.BuyerBic, row)));
+                var buyerBic = NullIfEmpty(NormalizeAccountId(ctx.Resolve(directDebit?.BuyerBic, row, p + "directDebit.buyerBic")));
                 desc.AddDebitorFinancialAccount(buyerIban, buyerBic);
                 Log.Debug("Käuferkonto (Lastschrift): IBAN={Iban}", MaskIban(buyerIban));
             }
@@ -587,24 +689,31 @@ public static class InvoiceMapper
     private static readonly HashSet<string> XRechnungInvoiceTypeCodes =
         ["326", "380", "381", "384", "389", "875", "876", "877"];
 
-    public static IReadOnlyList<string> CheckDocument(InvoiceDescriptor desc, string? profile)
+    public static IReadOnlyList<string> CheckDocument(InvoiceDescriptor desc, string? profile) =>
+        CheckDocumentDiagnostics(desc, profile).Select(d => d.Message).ToList();
+
+    /// <summary>Strukturierter Kern der Dokumentprüfung; <see cref="CheckDocument"/> liefert dieselben Texte.</summary>
+    public static IReadOnlyList<MappingDiagnostic> CheckDocumentDiagnostics(InvoiceDescriptor desc, string? profile)
     {
-        var warnings = new List<string>();
-        var typeCode = GetInvoiceTypeCode(desc.Type);
+        var warnings = new List<MappingDiagnostic>();
+        var typeCode = ConfigValues.GetInvoiceTypeCode(desc.Type);
 
         if (IsXRechnung(profile) && !XRechnungInvoiceTypeCodes.Contains(typeCode))
-            warnings.Add($"XRechnung erlaubt Rechnungstyp {typeCode} (BT-3) nicht; zulässig sind {string.Join(", ", XRechnungInvoiceTypeCodes)} (BR-DE-17)");
+            warnings.Add(new MappingDiagnostic(DiagnosticCodes.XrechnungTypeCodeNotAllowed, "mapping.invoice.typeCode",
+                $"XRechnung erlaubt Rechnungstyp {typeCode} (BT-3) nicht; zulässig sind {string.Join(", ", XRechnungInvoiceTypeCodes)} (BR-DE-17)"));
 
         var hasPrecedingInvoice = desc.GetInvoiceReferencedDocuments().Count > 0;
 
         if (desc.Type is InvoiceType.CreditNote or InvoiceType.Correction && !hasPrecedingInvoice)
         {
             var rule = IsXRechnung(profile) && desc.Type == InvoiceType.Correction ? " (BR-DE-26)" : string.Empty;
-            warnings.Add($"Rechnungstyp {typeCode} ohne Vorgängerrechnung (BT-25), invoice.precedingInvoices fehlt{rule}");
+            warnings.Add(new MappingDiagnostic(DiagnosticCodes.PrecedingInvoiceMissing, "mapping.invoice.precedingInvoices",
+                $"Rechnungstyp {typeCode} ohne Vorgängerrechnung (BT-25), invoice.precedingInvoices fehlt{rule}"));
         }
 
         if (hasPrecedingInvoice && string.Equals(profile, "minimum", StringComparison.OrdinalIgnoreCase))
-            warnings.Add("Profil MINIMUM enthält keine Vorgängerrechnung (BT-25), invoice.precedingInvoices wird nicht geschrieben");
+            warnings.Add(new MappingDiagnostic(DiagnosticCodes.PrecedingInvoiceNotInMinimum, "zugferd.profile",
+                "Profil MINIMUM enthält keine Vorgängerrechnung (BT-25), invoice.precedingInvoices wird nicht geschrieben"));
 
         return warnings;
     }
@@ -612,104 +721,224 @@ public static class InvoiceMapper
     private static bool IsXRechnung(string? profile) =>
         string.Equals(profile, "xrechnung", StringComparison.OrdinalIgnoreCase);
 
-    public static IReadOnlyList<string> CheckPaymentMeans(InvoiceDescriptor desc, string? profile)
+    public static IReadOnlyList<string> CheckPaymentMeans(InvoiceDescriptor desc, string? profile) =>
+        CheckPaymentMeansDiagnostics(desc, profile).Select(d => d.Message).ToList();
+
+    /// <summary>Strukturierter Kern der Zahlungsprüfung; <see cref="CheckPaymentMeans"/> liefert dieselben Texte.</summary>
+    public static IReadOnlyList<MappingDiagnostic> CheckPaymentMeansDiagnostics(InvoiceDescriptor desc, string? profile)
     {
-        var warnings = new List<string>();
+        const string p = "mapping.paymentMeans";
+        var warnings = new List<MappingDiagnostic>();
         var typeCode = desc.PaymentMeans?.TypeCode;
 
         if (typeCode == null)
         {
             if (IsXRechnung(profile))
-                warnings.Add("XRechnung verlangt Zahlungsanweisungen (BR-DE-1), paymentMeans fehlt");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.PaymentMeansMissingXrechnung, p,
+                    "XRechnung verlangt Zahlungsanweisungen (BR-DE-1), paymentMeans fehlt"));
             return warnings;
         }
 
         if (typeCode is PaymentMeansTypeCodes.CreditTransferNonSEPA or PaymentMeansTypeCodes.SEPACreditTransfer
             && desc.CreditorBankAccounts.Count == 0)
-            warnings.Add($"Zahlungsart {(int)typeCode} (Überweisung) ohne IBAN des Verkäufers (BR-61)");
+            warnings.Add(new MappingDiagnostic(DiagnosticCodes.CreditTransferWithoutIban, p + ".sellerAccounts",
+                $"Zahlungsart {(int)typeCode} (Überweisung) ohne IBAN des Verkäufers (BR-61)"));
 
         if (typeCode == PaymentMeansTypeCodes.SEPADirectDebit)
         {
             if (string.IsNullOrEmpty(desc.PaymentMeans!.SEPACreditorIdentifier))
-                warnings.Add("SEPA-Lastschrift ohne Gläubiger-ID (BT-90)");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.DirectDebitWithoutCreditorId, p + ".directDebit.creditorId", "SEPA-Lastschrift ohne Gläubiger-ID (BT-90)"));
             if (string.IsNullOrEmpty(desc.PaymentMeans.SEPAMandateReference))
-                warnings.Add("SEPA-Lastschrift ohne Mandatsreferenz (BT-89)");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.DirectDebitWithoutMandate, p + ".directDebit.mandateReference", "SEPA-Lastschrift ohne Mandatsreferenz (BT-89)"));
             if (desc.DebitorBankAccounts.Count == 0)
-                warnings.Add("SEPA-Lastschrift ohne IBAN des Käufers (BT-91)");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.DirectDebitWithoutBuyerIban, p + ".directDebit.buyerIban", "SEPA-Lastschrift ohne IBAN des Käufers (BT-91)"));
         }
 
-        foreach (var account in desc.CreditorBankAccounts)
+        for (var i = 0; i < desc.CreditorBankAccounts.Count; i++)
         {
+            var account = desc.CreditorBankAccounts[i];
             if (!string.IsNullOrEmpty(account.IBAN) && !IsValidIban(account.IBAN))
-                warnings.Add($"IBAN des Verkäufers {account.IBAN} hat eine ungültige Prüfsumme");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.InvalidIbanChecksum, $"{p}.sellerAccounts[{i}].iban",
+                    $"IBAN des Verkäufers {account.IBAN} hat eine ungültige Prüfsumme"));
         }
 
         foreach (var account in desc.DebitorBankAccounts)
         {
             if (!string.IsNullOrEmpty(account.IBAN) && !IsValidIban(account.IBAN))
-                warnings.Add($"IBAN des Käufers {MaskIban(account.IBAN)} hat eine ungültige Prüfsumme");
+                warnings.Add(new MappingDiagnostic(DiagnosticCodes.InvalidIbanChecksum, p + ".directDebit.buyerIban",
+                    $"IBAN des Käufers {MaskIban(account.IBAN)} hat eine ungültige Prüfsumme"));
         }
 
         return warnings;
     }
 
+    // --- Kontext: reicht die Diagnosesammlung an die privaten Methoden durch ---
+
+    private sealed class MappingContext(CsvConfig csvConfig, ICollection<MappingDiagnostic>? diagnostics)
+    {
+        public void Add(MappingDiagnostic diagnostic) => diagnostics?.Add(diagnostic);
+
+        public void Ignored(string path, string reason)
+        {
+            var message = $"{path} ist konfiguriert, {reason}";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.ConfigFieldIgnored, path, message));
+        }
+
+        public void Missing(string path, string reason)
+        {
+            var message = $"{path} fehlt, {reason}";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.ConfigFieldMissing, path, message));
+        }
+
+        public void Fallback(string path, string value, ValueSet valueSet, string? where = null)
+        {
+            var location = where == null ? path : $"{path} ({where})";
+            var message = $"Unbekannter Wert '{value}' in {location}, verwendet wird {valueSet.InvalidFallback}; zulässig sind {Summarize(valueSet.Canonical)}";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.ConfigValueFallback, path, message));
+        }
+
+        public string Resolve(FieldMapping? field, Dictionary<string, string> row, string path)
+        {
+            if (field == null) return string.Empty;
+            if (!string.IsNullOrEmpty(field.Value)) return field.Value;
+            if (!string.IsNullOrEmpty(field.Column))
+            {
+                var columnValue = row.GetValueOrDefault(field.Column);
+                if (!string.IsNullOrEmpty(columnValue))
+                    return columnValue;
+            }
+
+            var ruleValue = ResolveRule(field, column => row.GetValueOrDefault(column) ?? string.Empty, path);
+            if (!string.IsNullOrEmpty(ruleValue))
+                return ruleValue;
+
+            if (!string.IsNullOrEmpty(field.Default))
+                return field.Default;
+
+            return string.Empty;
+        }
+
+        public string ResolveRule(FieldMapping? field, Func<string, string> resolveColumn, string path)
+        {
+            if (field?.Rules == null) return string.Empty;
+
+            for (var i = 0; i < field.Rules.Count; i++)
+            {
+                var rule = field.Rules[i];
+                var column = rule.When?.Column;
+                var pattern = rule.When?.Regex;
+                if (string.IsNullOrEmpty(column) || string.IsNullOrEmpty(pattern))
+                    continue;
+
+                var value = resolveColumn(column);
+                if (string.IsNullOrEmpty(value))
+                    continue;
+
+                try
+                {
+                    if (Regex.IsMatch(value, pattern, RegexOptions.CultureInvariant))
+                        return rule.Value ?? string.Empty;
+                }
+                catch (ArgumentException ex)
+                {
+                    Log.Warning(ex, "Ungültiger Regex im YAML-Mapping ignoriert: {Regex}", pattern);
+                    Add(new MappingDiagnostic(DiagnosticCodes.InvalidRegex, $"{path}.rules[{i}].when.regex",
+                        $"Ungültiger Regex '{pattern}' wird ignoriert: {ex.Message}"));
+                }
+            }
+
+            return string.Empty;
+        }
+
+        public DateTime ParseDate(string value, string path)
+        {
+            if (string.IsNullOrEmpty(value)) return DateTime.MinValue;
+            if (DateTime.TryParseExact(value, csvConfig.DateFormat, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+                return date;
+            if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+                return date;
+
+            var message = $"Datum '{value}' in {path} entspricht nicht dem Format {csvConfig.DateFormat}; verwendet wird {DateTime.MinValue:yyyy-MM-dd}";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.InvalidDate, path, message));
+            return DateTime.MinValue;
+        }
+
+        public decimal ParseDecimal(string value, string path, string? where = null)
+        {
+            if (string.IsNullOrEmpty(value)) return 0m;
+            var normalized = value.Trim().TrimEnd('%').Trim();
+            normalized = csvConfig.DecimalSeparator == "," ? normalized.Replace(",", ".") : normalized;
+            if (decimal.TryParse(normalized, NumberStyles.Any, CultureInfo.InvariantCulture, out var result))
+                return result;
+
+            var location = where == null ? path : $"{path} ({where})";
+            var message = $"Zahl '{value}' in {location} ist nicht lesbar (Dezimaltrennzeichen '{csvConfig.DecimalSeparator}'); verwendet wird 0";
+            Log.Warning("{Warning}", message);
+            Add(new MappingDiagnostic(DiagnosticCodes.InvalidDecimal, path, message));
+            return 0m;
+        }
+
+        public CurrencyCodes ParseCurrency(string value, string path)
+        {
+            if (ConfigValues.TryParseCurrency(value, out var code) || string.IsNullOrEmpty(value)) return code;
+            Fallback(path, value, ConfigValues.Currency);
+            return code;
+        }
+
+        public CountryCodes ParseCountry(string value, string path)
+        {
+            if (ConfigValues.TryParseCountry(value, out var code) || string.IsNullOrEmpty(value)) return code;
+            Fallback(path, value, ConfigValues.Country);
+            return code;
+        }
+
+        public QuantityCodes ParseUnitCode(string value, string path, string where)
+        {
+            if (ConfigValues.TryParseUnitCode(value, out var code) || string.IsNullOrEmpty(value)) return code;
+            Fallback(path, value, ConfigValues.UnitCode, where);
+            return code;
+        }
+
+        public TaxTypes ParseTaxType(string value, string path, string where)
+        {
+            if (ConfigValues.TryParseTaxType(value, out var code) || string.IsNullOrEmpty(value)) return code;
+            Fallback(path, value, ConfigValues.TaxType, where);
+            return code;
+        }
+
+        public TaxCategoryCodes ParseTaxCategory(string value, string path, string where)
+        {
+            if (ConfigValues.TryParseTaxCategory(value, out var code) || string.IsNullOrEmpty(value)) return code;
+            Fallback(path, value, ConfigValues.TaxCategory, where);
+            return code;
+        }
+
+        public TaxRegistrationSchemeID ParseTaxScheme(string? value, string path)
+        {
+            if (ConfigValues.TryParseTaxScheme(value, out var scheme) || string.IsNullOrEmpty(value)) return scheme;
+            Fallback(path, value, ConfigValues.TaxScheme);
+            return scheme;
+        }
+
+        public ElectronicAddressSchemeIdentifiers ParseElectronicAddressScheme(string? value, string path)
+        {
+            if (ConfigValues.TryParseElectronicAddressScheme(value, out var scheme) || string.IsNullOrEmpty(value)) return scheme;
+            Fallback(path, value, ConfigValues.ElectronicAddressScheme);
+            return scheme;
+        }
+
+        private static string Summarize(IReadOnlyList<string> values) =>
+            values.Count <= 12 ? string.Join(", ", values) : string.Join(", ", values.Take(12)) + $", ... ({values.Count} Werte)";
+    }
+
     // --- Helper methods ---
-
-    private static string Resolve(FieldMapping? field, Dictionary<string, string> row)
-    {
-        if (field == null) return string.Empty;
-        if (!string.IsNullOrEmpty(field.Value)) return field.Value;
-        if (!string.IsNullOrEmpty(field.Column))
-        {
-            var columnValue = row.GetValueOrDefault(field.Column);
-            if (!string.IsNullOrEmpty(columnValue))
-                return columnValue;
-        }
-
-        var ruleValue = ResolveRule(field, column => row.GetValueOrDefault(column) ?? string.Empty);
-        if (!string.IsNullOrEmpty(ruleValue))
-            return ruleValue;
-
-        if (!string.IsNullOrEmpty(field.Default))
-            return field.Default;
-
-        return string.Empty;
-    }
-
-    private static string ResolveRule(FieldMapping? field, Func<string, string> resolveColumn)
-    {
-        if (field?.Rules == null) return string.Empty;
-
-        foreach (var rule in field.Rules)
-        {
-            var column = rule.When?.Column;
-            var pattern = rule.When?.Regex;
-            if (string.IsNullOrEmpty(column) || string.IsNullOrEmpty(pattern))
-                continue;
-
-            var value = resolveColumn(column);
-            if (string.IsNullOrEmpty(value))
-                continue;
-
-            try
-            {
-                if (Regex.IsMatch(value, pattern, RegexOptions.CultureInvariant))
-                    return rule.Value ?? string.Empty;
-            }
-            catch (ArgumentException ex)
-            {
-                Log.Warning(ex, "Ungültiger Regex im YAML-Mapping ignoriert: {Regex}", pattern);
-            }
-        }
-
-        return string.Empty;
-    }
 
     private static string? NullIfEmpty(string value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
-
-    private static decimal GetDiscountPercent(FieldMapping? field, Dictionary<string, string> row, CsvConfig csvConfig) =>
-        ParseDecimal(Resolve(field, row), csvConfig.DecimalSeparator);
 
     private static decimal ApplyDiscount(decimal netPrice, decimal discountPercent) =>
         discountPercent > 0 ? Math.Round(netPrice * (1m - discountPercent / 100m), 4) : netPrice;
@@ -725,95 +954,19 @@ public static class InvoiceMapper
     private static decimal GetLineTotal(TradeLineItem item) =>
         item.LineTotalAmount ?? CalculateLineTotal(item.NetUnitPrice, item.BilledQuantity);
 
-    private static DateTime ParseDate(string value, string format)
-    {
-        if (string.IsNullOrEmpty(value)) return DateTime.MinValue;
-        if (DateTime.TryParseExact(value, format, CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
-            return date;
-        if (DateTime.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
-            return date;
-        return DateTime.MinValue;
-    }
-
-    private static decimal ParseDecimal(string value, string decimalSeparator)
-    {
-        if (string.IsNullOrEmpty(value)) return 0m;
-        var normalized = value.Trim().TrimEnd('%').Trim();
-        normalized = decimalSeparator == "," ? normalized.Replace(",", ".") : normalized;
-        return decimal.TryParse(normalized, NumberStyles.Any, CultureInfo.InvariantCulture, out var result) ? result : 0m;
-    }
-
-    private static CurrencyCodes ResolveCurrency(string value) =>
-        Enum.TryParse<CurrencyCodes>(value, true, out var code) ? code : CurrencyCodes.EUR;
-
-    private static CountryCodes ResolveCountry(string value) =>
-        Enum.TryParse<CountryCodes>(value, true, out var code) ? code : CountryCodes.DE;
-
-    private static TaxRegistrationSchemeID ParseTaxScheme(string? value) =>
-        value?.ToUpperInvariant() switch
-        {
-            "FC" => TaxRegistrationSchemeID.FC,
-            "VA" => TaxRegistrationSchemeID.VA,
-            _ => TaxRegistrationSchemeID.VA,
-        };
-
-    private static ElectronicAddressSchemeIdentifiers ParseElectronicAddressScheme(string? value) =>
-        value switch
-        {
-            "GermanyVatNumber" => ElectronicAddressSchemeIdentifiers.GermanyVatNumber,
-            "LuxemburgVatNumber" => ElectronicAddressSchemeIdentifiers.LuxemburgVatNumber,
-            "EM" or "ElectronicMailSmtp" => ElectronicAddressSchemeIdentifiers.ElectronicMailSmtp,
-            _ => ElectronicAddressSchemeIdentifiers.GermanyVatNumber,
-        };
-
     private static PaymentMeansTypeCodes ParsePaymentMeansTypeCode(string value)
     {
-        var trimmed = value.Trim();
-        if (int.TryParse(trimmed, NumberStyles.None, CultureInfo.InvariantCulture, out var number)
-            && Enum.IsDefined(typeof(PaymentMeansTypeCodes), number))
-            return (PaymentMeansTypeCodes)number;
-        if (!int.TryParse(trimmed, out _) && Enum.TryParse<PaymentMeansTypeCodes>(trimmed, true, out var code))
+        if (ConfigValues.TryParsePaymentMeansTypeCode(value, out var code))
             return code;
-        throw new InvalidOperationException($"Unbekannter Zahlungsart-Code (BT-81) in paymentMeans.typeCode: '{value}'");
-    }
-
-    // Die Zahlenwerte der Enum InvoiceType sind keine UNTDID-1001-Codes; die Codes hängen als
-    // EnumStringValueAttribute an den Enum-Feldern (Invoice = "380", CreditNote = "381", ...).
-    private static readonly (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) InvoiceTypeTable =
-        BuildInvoiceTypeTable();
-
-    private static (Dictionary<string, InvoiceType> ByCode, Dictionary<InvoiceType, string> ByType) BuildInvoiceTypeTable()
-    {
-        var byCode = new Dictionary<string, InvoiceType>();
-        var byType = new Dictionary<InvoiceType, string>();
-
-        foreach (var field in typeof(InvoiceType).GetFields(BindingFlags.Public | BindingFlags.Static))
-        {
-            var attribute = field.GetCustomAttribute<EnumStringValueAttribute>();
-            if (attribute == null) continue;
-
-            var type = (InvoiceType)field.GetValue(null)!;
-            byCode.TryAdd(attribute.Value, type);
-            byType.TryAdd(type, attribute.Value);
-            foreach (var legacyValue in attribute.LegacyValues ?? [])
-                byCode.TryAdd(legacyValue, type);
-        }
-
-        return (byCode, byType);
+        throw new Csv2ZugferdException(ErrorCodes.PaymentMeansTypeUnknown, $"Unbekannter Zahlungsart-Code (BT-81) in paymentMeans.typeCode: '{value}'");
     }
 
     private static InvoiceType ParseInvoiceType(string value)
     {
-        var trimmed = value.Trim();
-        if (InvoiceTypeTable.ByCode.TryGetValue(trimmed, out var byCode))
-            return byCode;
-        if (!int.TryParse(trimmed, out _) && Enum.TryParse<InvoiceType>(trimmed, true, out var byName))
-            return byName;
-        throw new InvalidOperationException($"Unbekannter Rechnungstyp (BT-3) in invoice.typeCode: '{value}'");
+        if (ConfigValues.TryParseInvoiceType(value, out var type))
+            return type;
+        throw new Csv2ZugferdException(ErrorCodes.InvoiceTypeUnknown, $"Unbekannter Rechnungstyp (BT-3) in invoice.typeCode: '{value}'");
     }
-
-    private static string GetInvoiceTypeCode(InvoiceType type) =>
-        InvoiceTypeTable.ByType.GetValueOrDefault(type) ?? ((int)type).ToString(CultureInfo.InvariantCulture);
 
     private static bool IsDirectDebit(PaymentMeansTypeCodes typeCode) =>
         typeCode is PaymentMeansTypeCodes.SEPADirectDebit or PaymentMeansTypeCodes.DirectDebit;
@@ -838,13 +991,4 @@ public static class InvoiceMapper
         }
         return remainder == 1;
     }
-
-    private static QuantityCodes ParseUnitCode(string value) =>
-        Enum.TryParse<QuantityCodes>(value, true, out var code) ? code : QuantityCodes.C62;
-
-    private static TaxTypes ParseTaxType(string value) =>
-        Enum.TryParse<TaxTypes>(value, true, out var code) ? code : TaxTypes.VAT;
-
-    private static TaxCategoryCodes ParseTaxCategory(string value) =>
-        Enum.TryParse<TaxCategoryCodes>(value, true, out var code) ? code : TaxCategoryCodes.S;
 }

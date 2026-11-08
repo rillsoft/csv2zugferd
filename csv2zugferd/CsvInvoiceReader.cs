@@ -7,9 +7,39 @@ using Serilog;
 
 namespace Csv2Zugferd;
 
+/// <summary>Kopfzeile und Datenzeilen einer CSV-Datei in Dateireihenfolge.</summary>
+public sealed record CsvTable(IReadOnlyList<string> Headers, List<Dictionary<string, string>> Rows);
+
 public static class CsvInvoiceReader
 {
     public static List<Dictionary<string, string>> Read(string path, CsvConfig csvConfig)
+        => ReadTable(path, csvConfig).Rows;
+
+    /// <summary>
+    /// Liest Kopfzeile und Datenzeilen. Einziger Lesepfad für CLI und MCP-Server.
+    /// Fehlende Datei → <see cref="ErrorCodes.CsvFileNotFound"/>, fehlende Kopfzeile → <see cref="ErrorCodes.CsvEmpty"/>,
+    /// andere Lesefehler (Encoding, Format) → <see cref="ErrorCodes.CsvReadFailed"/>.
+    /// </summary>
+    public static CsvTable ReadTable(string path, CsvConfig csvConfig)
+    {
+        if (!File.Exists(path))
+            throw new Csv2ZugferdException(ErrorCodes.CsvFileNotFound, $"CSV-Datei nicht gefunden: {path}");
+
+        try
+        {
+            return ReadTableCore(path, csvConfig);
+        }
+        catch (Csv2ZugferdException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            throw new Csv2ZugferdException(ErrorCodes.CsvReadFailed, $"CSV-Datei konnte nicht gelesen werden: {ex.Message}", ex);
+        }
+    }
+
+    private static CsvTable ReadTableCore(string path, CsvConfig csvConfig)
     {
         var encoding = Encoding.GetEncoding(csvConfig.Encoding);
         var separator = csvConfig.Separator switch
@@ -33,7 +63,9 @@ public static class CsvInvoiceReader
 
         var records = new List<Dictionary<string, string>>();
 
-        csv.Read();
+        if (!csv.Read())
+            throw new Csv2ZugferdException(ErrorCodes.CsvEmpty, $"CSV-Datei enthält keine Kopfzeile: {path}");
+
         csv.ReadHeader();
         var headers = csv.HeaderRecord ?? [];
         Log.Debug("CSV-Header: {HeaderCount} Spalten erkannt: {Headers}", headers.Length, string.Join(", ", headers));
@@ -49,6 +81,6 @@ public static class CsvInvoiceReader
         }
 
         Log.Debug("CSV-Reader: {RecordCount} Datensätze gelesen", records.Count);
-        return records;
+        return new CsvTable(headers, records);
     }
 }

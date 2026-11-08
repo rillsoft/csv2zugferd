@@ -177,6 +177,129 @@ public class YamlConfigLoaderTests
     }
 
     [Test]
+    public void Load_MissingFile_ThrowsConfigNotFound()
+    {
+        var exception = Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.Load("nonexistent_file_xyz.yml"));
+
+        exception.Code.ShouldBe(ErrorCodes.ConfigNotFound);
+    }
+
+    [Test]
+    public void Load_InvalidYaml_ThrowsConfigInvalidYaml()
+    {
+        var yamlPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "invalid.yml");
+        File.WriteAllText(yamlPath, "csv:" + Environment.NewLine + "  separator: [" + Environment.NewLine);
+        try
+        {
+            var exception = Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.Load(yamlPath));
+
+            exception.Code.ShouldBe(ErrorCodes.ConfigInvalidYaml);
+            exception.Message.ShouldContain("Zeile");
+        }
+        finally
+        {
+            File.Delete(yamlPath);
+        }
+    }
+
+    [Test]
+    public void LoadFromString_ScalarInsteadOfMapping_ExplainsExpectedObject()
+    {
+        var exception = Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.LoadFromString("mapping:\n  lineItems:\n    fixedFields:\n      unitCode: C62\n"));
+
+        exception.Code.ShouldBe(ErrorCodes.ConfigInvalidYaml);
+        exception.Message.ShouldContain("Objekt");
+        exception.Message.ShouldContain("value");
+    }
+
+    [Test]
+    public void LoadFromString_Empty_ThrowsConfigInvalidYaml()
+    {
+        Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.LoadFromString(string.Empty))
+            .Code.ShouldBe(ErrorCodes.ConfigInvalidYaml);
+    }
+
+    [Test]
+    public void LoadFromString_RowsConfig_EqualsLoadFromFile()
+    {
+        var path = TestHelper.GetTestDataPath("config_rows.yml");
+
+        var fromFile = YamlConfigLoader.Load(path);
+        var fromString = YamlConfigLoader.LoadFromString(File.ReadAllText(path));
+
+        System.Text.Json.JsonSerializer.Serialize(fromString).ShouldBe(System.Text.Json.JsonSerializer.Serialize(fromFile));
+    }
+
+    [Test]
+    public void FindUnknownKeys_MisspelledKey_ReturnsDottedPath()
+    {
+        var unknown = YamlConfigLoader.FindUnknownKeys("""
+            mapping:
+              invoice:
+                number:
+                  column: "Rechnungsnummer"
+                invoiceDate:
+                  colum: "Datum"
+            """);
+
+        unknown.ShouldBe(["mapping.invoice.number", "mapping.invoice.invoiceDate.colum"]);
+    }
+
+    [TestCase("config_rows.yml")]
+    [TestCase("config_columns_suffix.yml")]
+    [TestCase("config_columns_prefix.yml")]
+    [TestCase("config_creditnote.yml")]
+    [TestCase("config_directdebit.yml")]
+    public void FindUnknownKeys_AllValidTestdataConfigs_ReturnEmpty(string configFile)
+    {
+        var unknown = YamlConfigLoader.FindUnknownKeys(File.ReadAllText(TestHelper.GetTestDataPath(configFile)));
+
+        unknown.ShouldBeEmpty();
+    }
+
+    [Test]
+    public void FindUnknownKeys_FixedFieldsTypo_ReturnsFullPath()
+    {
+        var unknown = YamlConfigLoader.FindUnknownKeys("""
+            mapping:
+              lineItems:
+                mode: "columns"
+                fixedFields:
+                  unitcode:
+                    value: "C62"
+                  taxType:
+                    valeu: "VAT"
+            """);
+
+        unknown.ShouldBe(["mapping.lineItems.fixedFields.unitcode", "mapping.lineItems.fixedFields.taxType.valeu"]);
+    }
+
+    [Test]
+    public void FindUnknownKeys_ListIndexAndColumnsFields_ReportOnlyRealUnknowns()
+    {
+        var unknown = YamlConfigLoader.FindUnknownKeys("""
+            mapping:
+              seller:
+                taxRegistrations:
+                  - value: "201/113/40209"
+                    scheme: "FC"
+                  - value: "DE123456789"
+                    schema: "VA"
+              lineItems:
+                columnsFields:
+                  irgendwas: "Artikel"
+            """);
+
+        unknown.ShouldBe(["mapping.seller.taxRegistrations[1].schema"]);
+    }
+
+    [Test]
+    public void FindUnknownKeys_InvalidYaml_ThrowsConfigInvalidYaml()
+    {
+        Should.Throw<Csv2ZugferdException>(() => YamlConfigLoader.FindUnknownKeys("a: [")).Code.ShouldBe(ErrorCodes.ConfigInvalidYaml);
+    }
+
+    [Test]
     public void Load_NonExistentFile_ThrowsException()
     {
         Should.Throw<Exception>(() => YamlConfigLoader.Load("nonexistent_file_xyz.yml"));
