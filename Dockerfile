@@ -8,7 +8,7 @@
 # The tools only see files below the mounted /data folder (the working directory).
 # Any other CLI call works as well: docker run --rm -v "<folder>:/data" csv2zugferd --help
 
-ARG APP_VERSION=1.3.0
+ARG APP_VERSION=1.3.1
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src

@@ -70,6 +70,20 @@ public class PackageMetadataTests
         dockerfile.ShouldContain("CMD [\"mcp\"]");
     }
 
+    /// <summary>
+    /// Ein Rückstrich in PackagePath ist unter Linux kein Verzeichnistrenner; dotnet pack erzeugte so
+    /// in der Pipeline den Eintrag ".mcp//server.json", den nuget.org nicht als Manifest erkannte (1.3.0).
+    /// </summary>
+    [Test]
+    public void Csproj_PackagePaths_UseForwardSlashesOnly()
+    {
+        var csproj = File.ReadAllText(Path.Combine(RepoRoot(), "csv2zugferd", "csv2zugferd.csproj"));
+        var packagePaths = Regex.Matches(csproj, "PackagePath=\"([^\"]*)\"").Select(m => m.Groups[1].Value).ToList();
+
+        packagePaths.ShouldContain(".mcp/");
+        packagePaths.ShouldAllBe(path => !path.Contains('\\'));
+    }
+
     [Test]
     public void GlamaJson_NamesMaintainer()
     {
