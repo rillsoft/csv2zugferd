@@ -71,7 +71,7 @@ Vorbereitung: Für die Einrichtung mit einem KI-Assistenten anonymisierte Beispi
 
 Der Server wird vom MCP-Client gestartet und liest JSON-RPC von stdin; stdout trägt ausschließlich JSON-RPC, Warnungen gehen zusätzlich nach stderr. Die Logdatei `zugferd-*.log` liegt nicht im Arbeitsverzeichnis (das bestimmt der Client), sondern unter `csv2zugferd\logs` im lokalen Anwendungsdatenordner (Windows `%LOCALAPPDATA%\csv2zugferd\logs`, Linux und macOS `~/.local/share/csv2zugferd/logs`); die Umgebungsvariable `CSV2ZUGFERD_LOG_DIR` setzt ein anderes Verzeichnis. `--verbose` schaltet die Logdatei auf Debug.
 
-Zwei Wege zum Start: die Windows-Exe aus dem [GitHub-Release](https://github.com/rillsoft/csv2zugferd/releases) (`csv2zugferd.exe mcp`, kein .NET nötig) oder das .NET-Tool-Paket `csv2zugferd` von NuGet, das MCP-Clients mit `dnx csv2zugferd@1.3.0 mcp` starten (benötigt das .NET-10-SDK; läuft unter Windows, Linux und macOS). Mit dem Release 1.3.0 erscheint der Server in der [Official MCP Registry](https://registry.modelcontextprotocol.io/) unter dem Namen `de.zugferd-tools/csv2zugferd`.
+Zwei Wege zum Start: die Windows-Exe aus dem [GitHub-Release](https://github.com/rillsoft/csv2zugferd/releases) (`csv2zugferd.exe mcp`, kein .NET nötig) oder das .NET-Tool-Paket `csv2zugferd` von NuGet, das MCP-Clients mit `dnx csv2zugferd@1.3.1 mcp` starten (benötigt das .NET-10-SDK; läuft unter Windows, Linux und macOS). Mit dem Release 1.3.1 erscheint der Server in der [Official MCP Registry](https://registry.modelcontextprotocol.io/) unter dem Namen `de.zugferd-tools/csv2zugferd`.
 
 Claude Desktop (`claude_desktop_config.json`):
 
@@ -93,7 +93,7 @@ Claude Desktop mit dem NuGet-Paket statt der Exe:
   "mcpServers": {
     "csv2zugferd": {
       "command": "dnx",
-      "args": ["csv2zugferd@1.3.0", "mcp"]
+      "args": ["csv2zugferd@1.3.1", "mcp"]
     }
   }
 }
@@ -104,7 +104,7 @@ Claude Code:
 ```powershell
 claude mcp add csv2zugferd -- C:\Tools\csv2zugferd.exe mcp
 # oder mit dem NuGet-Paket:
-claude mcp add csv2zugferd -- dnx csv2zugferd@1.3.0 mcp
+claude mcp add csv2zugferd -- dnx csv2zugferd@1.3.1 mcp
 ```
 
 VS Code (`.vscode/mcp.json`):

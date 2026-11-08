@@ -57,10 +57,12 @@
     </Content>
   </ItemGroup>
 
-  <!-- Paketinhalt: README (nuget.org, Registry-Marker mcp-name) und Registry-Manifest -->
+  <!-- Paketinhalt: README (nuget.org, Registry-Marker mcp-name) und Registry-Manifest.
+       PackagePath nur mit Schraegstrich: ein Rueckstrich ist unter Linux kein Verzeichnistrenner,
+       NuGet erzeugte dann den Eintrag ".mcp//server.json" und nuget.org fand kein Manifest. -->
   <ItemGroup>
-    <None Include="..\README.md" Pack="true" PackagePath="\" />
-    <None Include="..\.mcp\server.json" Pack="true" PackagePath=".mcp\" />
+    <None Include="..\README.md" Pack="true" PackagePath="/" />
+    <None Include="..\.mcp\server.json" Pack="true" PackagePath=".mcp/" />
   </ItemGroup>
 
   <!-- MCP-Ressourcen: README und Beispielkonfigurationen eingebettet (Mcp/DocResources.cs) -->
